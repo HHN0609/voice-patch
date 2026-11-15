@@ -43,10 +43,21 @@
 | 依赖 | 说明 |
 | --- | --- |
 | Python 3.10+ | 后端 |
-| Node.js 18+ | 仅在前端改 UI / 重新构建时需要 |
+| Node.js 18+ | 首次构建前端、以及修改 UI 时需要 |
 | ffmpeg | 优先用 `PATH` 里的；没有则用 `imageio-ffmpeg` wheel 自带的二进制 |
 
-### 1. 后端
+### 1. 构建前端（首次或前端改动后）
+
+`web/` 是构建产物、不入库，因此需要本地构建一次：
+
+```powershell
+cd frontend
+npm install
+npm run build    # 产物输出到 ../web
+cd ..
+```
+
+### 2. 后端
 
 ```powershell
 cd voice-patch
@@ -60,7 +71,7 @@ python run.py
 
 打开 <http://127.0.0.1:8765/ui/>。健康检查：`GET /api/health` 会返回当前 provider 的降级告警。
 
-### 2. 前端（可选）
+### 3. 前端开发模式（可选）
 
 ```powershell
 cd frontend
@@ -149,7 +160,7 @@ voice-patch/
 │  ├─ audio/fitting.py    # 自动语速、take 适配与择优
 │  └─ text/normalize.py   # 数字/百分比/年份中文读法规整
 ├─ frontend/              # 前端源码（详见 frontend/README.md）
-├─ web/                   # 前端构建产物（FastAPI 挂载到 /ui）
+├─ web/                   # 前端构建产物（FastAPI 挂载到 /ui，已 gitignore）
 ├─ scripts/               # 冒烟 / 云服务 / HTTP 链路测试
 └─ data/                  # 运行时数据（已 gitignore）
 ```
