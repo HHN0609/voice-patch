@@ -71,6 +71,8 @@ class SynthesizeReq(BaseModel):
     speed: float | None = None          # None = 自动求最优；UI 滑块可覆盖
     allow_stretch: bool = False
     takes: int | None = None
+    ref_t0: float | None = None         # 用户选中的参考音色区间（同说话人）
+    ref_t1: float | None = None
 
 
 @app.post("/api/segments/{sid}/synthesize")
@@ -79,9 +81,20 @@ def synthesize(sid: str, req: SynthesizeReq) -> dict:
         raise HTTPException(400, "文本为空")
     try:
         return orc.synthesize_segment(sid, req.text, req.speed,
-                                      req.allow_stretch, req.takes)
+                                      req.allow_stretch, req.takes,
+                                      req.ref_t0, req.ref_t1)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     except Exception as e:
         raise HTTPException(500, str(e))
+
+
+@app.get("/api/projects/{pid}")
+def project_detail(pid: str) -> dict:
+    try:
+        return orc.get_project(pid)
+    except KeyError as e:
+        raise HTTPException(404, str(e))
 
 
 class RenderReq(BaseModel):

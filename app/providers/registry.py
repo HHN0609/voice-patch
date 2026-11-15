@@ -27,7 +27,7 @@ def _instantiate(kind: str, name: str) -> dict:
         from . import volc_asr, volc_tts
         cls = {"asr": volc_asr.VolcASR, "tts": volc_tts.VolcTTS}[kind]
         return cls()
-    raise ValueError(f"未知 provider: {kind}")
+    raise ValueError(f"未知 provider: {name}（{kind}）")
 
 
 def get_asr() -> dict:

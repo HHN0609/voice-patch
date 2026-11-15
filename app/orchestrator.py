@@ -27,13 +27,16 @@ def create_project(name: str, video_path: str) -> dict:
     execute("INSERT INTO projects VALUES(?,?,?,?,?,?,?)",
             (pid, name, str(dst_video), str(audio), info["duration"], None, now()))
     return {"id": pid, "name": name, "duration": info["duration"],
-            "video": str(dst_video), "audio": str(audio)}
+            "video_url": f"/data/projects/{pid}/{dst_video.name}",
+            "audio_url": f"/data/projects/{pid}/{audio.name}"}
 
 
 def get_project(pid: str) -> dict:
     p = query_one("SELECT * FROM projects WHERE id=?", (pid,))
     if not p:
         raise KeyError(f"project {pid} 不存在")
+    p["video_url"] = f"/data/projects/{pid}/{Path(p['video_path']).name}"
+    p["audio_url"] = f"/data/projects/{pid}/{Path(p['audio_path']).name}"
     return p
 
 
@@ -95,7 +98,9 @@ def pick_ref_audio(audio: str, T0: float, T1: float, want_len: float) -> str:
 
 
 def synthesize_segment(sid: str, text: str, speed: float | None = None,
-                       allow_stretch: bool = False, takes: int | None = None) -> dict:
+                       allow_stretch: bool = False, takes: int | None = None,
+                       ref_t0: float | None = None,
+                       ref_t1: float | None = None) -> dict:
     seg = query_one("SELECT * FROM segments WHERE id=?", (sid,))
     if not seg:
         raise KeyError(f"segment {sid} 不存在")
@@ -105,11 +110,25 @@ def synthesize_segment(sid: str, text: str, speed: float | None = None,
     window = seg["T1"] - seg["T0"] + 2 * RENDER["crossfade_ms"] / 1000.0  # 预留拼接淡化量
 
     tts = registry.get_tts()
-    ref = pick_ref_audio(proj["audio_path"], seg["T0"], seg["T1"], RENDER["ref_pick_len"])
-    voice_id = proj.get("voice_id")
-    if not voice_id:
+    # 参考音：优先用用户在波形上选中的"同说话人"区间（多说话人视频必需）；
+    # 未选时回退到自动 RMS 挑选。用户指定时强制重新克隆，避免缓存到别人的音色。
+    if ref_t0 is not None and ref_t1 is not None:
+        if ref_t1 - ref_t0 < 1.0:
+            raise ValueError("参考音区间太短（<1s），请框选一段完整的话")
+        if not (ref_t1 <= seg["T0"] or ref_t0 >= seg["T1"]):
+            raise ValueError("参考音区间不能与口误区间重叠")
+        ref = str(Path(proj["audio_path"]).parent / f"ref_{new_id()}.wav")
+        ff.cut(proj["audio_path"], ref_t0, min(ref_t1, proj["duration"]), ref)
         voice_id = tts.clone(ref)
         execute("UPDATE projects SET voice_id=? WHERE id=?", (voice_id, proj["id"]))
+        voice_source = "user"
+    else:
+        ref = pick_ref_audio(proj["audio_path"], seg["T0"], seg["T1"], RENDER["ref_pick_len"])
+        voice_id = proj.get("voice_id")
+        if not voice_id:
+            voice_id = tts.clone(ref)
+            execute("UPDATE projects SET voice_id=? WHERE id=?", (voice_id, proj["id"]))
+        voice_source = "auto"
 
     takes = takes or CFG["tts"].get("takes", 3)
     # 第一遍用 1.0 探时长 → 自动求速；后续 take 都按该速度生成
@@ -156,6 +175,7 @@ def synthesize_segment(sid: str, text: str, speed: float | None = None,
             (text_norm, "synthesized", sid))
     return {"segment_id": sid, "text_norm": text_norm, "speed": round(auto_sp, 4),
             "window": round(window, 4), "takes": out,
+            "voice_source": voice_source,
             "overflow": overflow,
             "delta": best.delta,
             "d_class": bool(best.delta > window * 0.5)}  # Δ 超过窗口一半，按 D 类提示五选一路由
