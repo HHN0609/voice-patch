@@ -1,0 +1,34 @@
+# 口误修复平台配置
+# provider 可选：mock（无 Key 也可跑通全链路）/ volc（火山引擎，需配置 Key）
+
+asr:
+  provider: mock            # volc | mock
+  fallback: mock
+
+tts:
+  provider: mock            # volc | mock
+  fallback: mock
+  takes: 3                  # 每次 /synthesize 生成的候选数量
+
+volc:
+  appid: ""                 # 也可用环境变量 VOLC_APP_ID
+  access_token: ""          # 环境变量 VOLC_ACCESS_TOKEN
+  asr_cluster: ""           # 录音文件识别 cluster，如 volcengine_streaming_common（以官网为准）
+  tts_cluster: ""           # TTS cluster，如 volcano_tts
+  voice_type: ""            # 已复刻好的音色 ID（如 S_xxxx）；留空则先走 clone 上传参考音频
+  # 声音复刻接口字段以官网文档为准，可能需按开通的服务版本微调
+
+render:
+  target_lufs: -16          # 语音类目标响度（EBU R128）
+  true_peak: -1.5
+  crossfade_ms: 20          # 拼接等功率交叉淡化
+  noise_bed_gain: 0.06      # 底噪垫床权重
+  speed_range: [0.90, 1.10] # 语速滑块边界（文档 §5.1 ①）
+  stretch_range: [0.95, 1.05] # 允许的局部变速范围（§5.1 ④，需用户勾选）
+  tolerance_abs: 0.150      # 时长偏差容忍：绝对值
+  tolerance_rel: 0.08       # 或相对值（取宽）
+  region_expand_max: 0.5    # 选区自动向两侧扩展上限（秒）
+  ref_pick_len: 10.0        # 参考音频挑选窗口长度（秒）
+
+storage:
+  data_dir: data
