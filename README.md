@@ -21,7 +21,7 @@
 
 ```
 ┌──────────────────────────────┐        ┌────────────────────────────────────┐
-│ frontend/  React + TS + Vite │        │ app/  FastAPI（127.0.0.1:8765）      │
+│ frontend/  React + TS + Vite │        │ backend/  FastAPI（127.0.0.1:8765）  │
 │  · 波形选区 / 试听 / 预览     │──/api─▶│  · orchestrator 10 步流水线         │
 └──────────────────────────────┘        │  · providers  ASR / TTS（可替换）   │
              │ build                    │  · media      ffmpeg 封装            │
@@ -149,7 +149,7 @@ voice-patch/
 ├─ config.yaml            # provider / 渲染 / 存储配置
 ├─ requirements.txt
 ├─ .env.example           # 密钥模板
-├─ app/                   # 后端（详见 app/README.md）
+├─ backend/               # 后端（详见 backend/README.md）
 │  ├─ main.py             # FastAPI 路由与静态挂载
 │  ├─ orchestrator.py     # 10 步流水线编排
 │  ├─ config.py           # 配置加载（env > .env > yaml）

@@ -1,17 +1,17 @@
-# app/ · 后端
+# backend/ · 后端
 
 FastAPI 服务，负责视频抽轨、ASR 转写、TTS 合成、时长适配、ffmpeg 渲染与 SQLite 落库。前端静态产物由本服务在 `/ui` 提供，运行时数据在 `/data`。
 
 ## 启动
 
 ```powershell
-python run.py          # uvicorn app.main:app，127.0.0.1:8765
+python run.py          # uvicorn backend.main:app，127.0.0.1:8765
 ```
 
 也可以直接用 uvicorn：
 
 ```powershell
-uvicorn app.main:app --host 127.0.0.1 --port 8765 --reload
+uvicorn backend.main:app --host 127.0.0.1 --port 8765 --reload
 ```
 
 > 改了 `config.yaml` / `.env` 后需要重启进程：配置与 provider 实例都在进程内缓存。

@@ -15,7 +15,7 @@ def main() -> None:
     test_video.parent.mkdir(parents=True, exist_ok=True)
     if not test_video.exists():
         sys.path.insert(0, str(ROOT))
-        from app.media import ffmpeg_ops as ff
+        from backend.media import ffmpeg_ops as ff
         ff.make_test_media(str(test_video), 6.0)
 
     c = httpx.Client(base_url=BASE, timeout=120)

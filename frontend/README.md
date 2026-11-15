@@ -58,4 +58,4 @@ frontend/
 
 ## 接口类型
 
-`src/api.ts` 中的 `ProjectInfo`、`TranscribeResp`、`SynthResp`、`RenderResp` 与后端 `app/main.py` 的请求/响应结构一一对应；改后端字段时同步改这里，否则会静默拿到 `undefined`。
+`src/api.ts` 中的 `ProjectInfo`、`TranscribeResp`、`SynthResp`、`RenderResp` 与后端 `backend/main.py` 的请求/响应结构一一对应；改后端字段时同步改这里，否则会静默拿到 `undefined`。

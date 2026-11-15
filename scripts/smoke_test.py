@@ -9,8 +9,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app import orchestrator as orc
-from app.media import ffmpeg_ops as ff
+from backend import orchestrator as orc
+from backend.media import ffmpeg_ops as ff
 
 ROOT = Path(__file__).resolve().parent.parent
 TMP = ROOT / "data" / "_smoke"

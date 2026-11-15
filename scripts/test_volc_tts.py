@@ -10,7 +10,7 @@ from pathlib import Path
 import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from app.config import CFG  # noqa: E402  加载 .env
+from backend.config import CFG  # noqa: E402  加载 .env
 
 ENDPOINT = "https://openspeech.bytedance.com/api/v3/tts/create"
 TMP = Path(CFG["storage"]["data_dir"]) / "_volc_test"

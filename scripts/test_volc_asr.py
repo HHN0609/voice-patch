@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from app.config import CFG  # noqa: E402
+from backend.config import CFG  # noqa: E402
 
 TMP = Path(CFG["storage"]["data_dir"]) / "_volc_test"
 
@@ -15,8 +15,8 @@ def main() -> None:
     if not (CFG["volc"].get("api_key") or CFG["volc"].get("access_token")):
         print("SKIP: .env 里没有密钥")
         return
-    from app.providers.volc_asr import VolcASR
-    from app.providers.volc_tts import VolcTTS
+    from backend.providers.volc_asr import VolcASR
+    from backend.providers.volc_tts import VolcTTS
 
     TMP.mkdir(parents=True, exist_ok=True)
     ref = TMP / "ref.wav"

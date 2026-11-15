@@ -1,4 +1,4 @@
-"""Web 层：FastAPI 路由。运行：python run.py 或 uvicorn app.main:app"""
+"""Web 层：FastAPI 路由。运行：python run.py 或 uvicorn backend.main:app"""
 import shutil
 import tempfile
 from pathlib import Path
