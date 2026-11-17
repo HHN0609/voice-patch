@@ -62,6 +62,26 @@ export default function App() {
     wsRef.current = ws
   }, [])
 
+  // 波形时间更新：同步光标；暂停状态下顺带把画面帧对齐到同一位置
+  const onCursor = useCallback((t: number) => {
+    setCursor(t)
+    const v = videoRef.current
+    if (v && !wsRef.current?.isPlaying() && Math.abs(v.currentTime - t) > 0.1) {
+      v.currentTime = t
+    }
+  }, [])
+
+  // 拖动/点击时间轴跳转（音视频一起定位）
+  const seekTo = (t: number) => {
+    const ws = wsRef.current
+    if (!ws) return
+    const nt = Math.max(0, Math.min(t, duration || t))
+    ws.setTime(nt)
+    const v = videoRef.current
+    if (v) v.currentTime = nt
+    setCursor(nt)
+  }
+
   // 波形 → 视频 同步
   useEffect(() => {
     if (!playing) return
@@ -182,7 +202,7 @@ export default function App() {
             <div className="hint">
               在波形上<b style={{ color: '#ff7676' }}>拖拽红区</b>框选口误区间；
               切到<b style={{ color: '#5fd39a' }}>参考音色</b>后拖拽绿区，选中该说话人一段完整的话（多人视频必选）。
-              点击已有区域可删除。
+              点击选区右上角的 <b>✕</b> 可取消该选区；<b>拖动下方进度条</b>调播放进度，<b>单击波形</b>也能跳到对应位置。
             </div>
           </div>
         </div>
@@ -210,8 +230,25 @@ export default function App() {
             else setVoice(sel)
           }}
           onReady={onReady}
-          onTime={setCursor}
+          onTime={onCursor}
         />
+        <div className="timeline">
+          <input
+            className="scrubber"
+            type="range"
+            min={0}
+            max={duration || 0.01}
+            step={0.01}
+            value={Math.min(cursor, duration || 0)}
+            disabled={!duration}
+            onChange={(e) => seekTo(Number(e.target.value))}
+            aria-label="播放进度"
+          />
+          <div className="tl-labels">
+            <span className="mono">{fmt(cursor)}</span>
+            <span className="mono">{fmt(duration)}</span>
+          </div>
+        </div>
         <div className="sel-info">
           <span>口误区间：{mispeak ? `${fmt(mispeak.t0)} → ${fmt(mispeak.t1)}` : '未选'}</span>
           <span>参考音色：{voice ? `${fmt(voice.t0)} → ${fmt(voice.t1)}` : '未选（自动挑选）'}</span>

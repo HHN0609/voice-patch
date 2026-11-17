@@ -88,6 +88,11 @@ def cut(src: str, start: float, end: float, dst: str) -> None:
           "-c:a", "pcm_s16le", dst])
 
 
+def to_pcm16_mono(src: str, dst: str, ar: int = 16000) -> None:
+    """转成单声道 16 位 PCM WAV（云 ASR 上传用）。"""
+    _run(["-y", "-i", src, "-vn", "-ac", "1", "-ar", str(ar), "-c:a", "pcm_s16le", dst])
+
+
 def detect_silences(wav: str, noise_db: int = -35, min_d: float = 0.15) -> list[tuple[float, float]]:
     """返回 [(start, end)] 静音段列表。"""
     proc = _run(["-i", wav, "-af", f"silencedetect=noise={noise_db}dB:d={min_d}", "-f", "null", "-"])

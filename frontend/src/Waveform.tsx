@@ -34,6 +34,8 @@ export default function Waveform(props: Props) {
   const cb = useRef(props)
   const readyRef = useRef(false)
   const regionsRef = useRef<Regions | null>(null)
+  const dragOffRef = useRef<null | (() => void)>(null)
+  const internalRef = useRef(false)
   cb.current = props
   modeRef.current = props.mode
 
@@ -54,26 +56,24 @@ export default function Waveform(props: Props) {
     const regions = ws.registerPlugin(RegionsPlugin.create())
     regionsRef.current = regions
 
-    // 拖拽松手新建的区域在此打模式标记并着色
+    // 拖拽松手新建的区域在此打模式标记、着色，并把选区回传给父组件
+    // 注意：v8 的拖拽建区只发 region-created（不发 region-updated），
+    // 这里不回传的话选区只存在于画面上，切换模式时会被父组件的空状态清掉
     regions.on('region-created', (r: Region) => {
+      if (internalRef.current) return // 由下方 effect 重建的区域，状态本身已知
       const tag = r as Region & { _kind?: RegionMode }
-      if (!tag._kind) {
-        if (!modeRef.current) {
-          r.remove()
-          return
-        }
-        tag._kind = modeRef.current
-        r.setOptions({ color: COLORS[modeRef.current], id: `r-${modeRef.current}` })
+      if (tag._kind) return
+      if (!modeRef.current) {
+        r.remove()
+        return
       }
+      tag._kind = modeRef.current
+      r.setOptions({ color: COLORS[modeRef.current] })
+      cb.current.onChange(modeRef.current, { t0: r.start, t1: r.end })
     })
     regions.on('region-updated', (r: Region) => {
       const kind = (r as Region & { _kind?: RegionMode })._kind
       if (kind) cb.current.onChange(kind, { t0: r.start, t1: r.end })
-    })
-    regions.on('region-clicked', (r: Region, e: MouseEvent) => {
-      e.stopPropagation()
-      const kind = (r as Region & { _kind?: RegionMode })._kind
-      if (kind) cb.current.onChange(kind, null) // 点击区域 = 删除该选区
     })
 
     ws.on('ready', () => {
@@ -81,9 +81,14 @@ export default function Waveform(props: Props) {
       cb.current.onReady(ws.getDuration(), ws)
     })
     ws.on('timeupdate', (t: number) => cb.current.onTime(t))
-    regions.enableDragSelection({ color: 'rgba(0,0,0,0.01)' })
+    // 只有框选模式下才允许在波形上拖拽建区；只读模式下不建区（点击仍可跳转）
+    if (modeRef.current) {
+      dragOffRef.current = regions.enableDragSelection({ color: 'rgba(0,0,0,0.01)' })
+    }
 
     return () => {
+      dragOffRef.current?.()
+      dragOffRef.current = null
       ws.destroy()
       regionsRef.current = null
       readyRef.current = false
@@ -91,23 +96,66 @@ export default function Waveform(props: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.audioUrl])
 
+  // 模式切换时开关“拖拽建区”，避免只读浏览时误建选区
+  useEffect(() => {
+    const regions = regionsRef.current
+    if (!regions) return
+    if (props.mode && !dragOffRef.current) {
+      dragOffRef.current = regions.enableDragSelection({ color: 'rgba(0,0,0,0.01)' })
+    } else if (!props.mode && dragOffRef.current) {
+      dragOffRef.current()
+      dragOffRef.current = null
+    }
+  }, [props.mode])
+
   // 外部状态（模式切换/清除）变化时按最新选区重建区域
   useEffect(() => {
     if (!readyRef.current || !regionsRef.current) return
     const regions = regionsRef.current
-    regions.clearRegions()
     const add = (kind: RegionMode, sel: RegionSel | null) => {
       if (!sel) return
-      regions.addRegion({
-        id: `r-${kind}`,
-        start: sel.t0,
-        end: sel.t1,
-        color: COLORS[kind],
-        drag: true,
-        resize: true,
-        _kind: kind,
-      } as never)
+      // 右上角清除按钮：只取消对应选区，不触发跳转/拖拽
+      // 区域渲染在 WaveSurfer 的 shadow DOM 内，页面 CSS 不生效，样式必须内联
+      const clear = document.createElement('div')
+      Object.assign(clear.style, {
+        position: 'absolute', top: '2px', right: '2px', padding: '0', zIndex: '3',
+      })
+      const btn = document.createElement('button')
+      btn.type = 'button'
+      btn.title = '取消该选区'
+      btn.textContent = '✕'
+      Object.assign(btn.style, {
+        width: '16px', height: '16px', padding: '0', display: 'flex',
+        alignItems: 'center', justifyContent: 'center', fontSize: '10px',
+        lineHeight: '1', color: '#fff', cursor: 'pointer',
+        background: 'rgba(0,0,0,0.55)', border: '1px solid rgba(255,255,255,0.45)',
+        borderRadius: '50%',
+      })
+      btn.addEventListener('click', (ev) => {
+        ev.stopPropagation()
+        cb.current.onChange(kind, null)
+      })
+      clear.appendChild(btn)
+
+      internalRef.current = true
+      try {
+        const r = regions.addRegion({
+          id: `r-${kind}`,
+          start: sel.t0,
+          end: sel.t1,
+          color: COLORS[kind],
+          drag: true,
+          resize: true,
+          content: clear,
+          avoidOverlapping: false,
+        })
+        ;(r as Region & { _kind?: RegionMode })._kind = kind
+      } finally {
+        internalRef.current = false
+      }
     }
+    // 清掉旧区域后按最新状态重建（重建期间屏蔽 region-created 的副作用）
+    regions.clearRegions()
     add('mispeak', props.mispeak)
     add('voice', props.voice)
   }, [props.mispeak, props.voice, props.mode])

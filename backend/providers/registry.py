@@ -27,6 +27,11 @@ def _instantiate(kind: str, name: str) -> dict:
         from . import volc_asr, volc_tts
         cls = {"asr": volc_asr.VolcASR, "tts": volc_tts.VolcTTS}[kind]
         return cls()
+    if name == "deepseek":
+        if kind != "asr":
+            raise ValueError("DeepSeek 目前只有 ASR 实现")
+        from . import deepseek_asr
+        return deepseek_asr.DeepSeekASR()
     raise ValueError(f"未知 provider: {name}（{kind}）")
 
 

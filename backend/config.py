@@ -36,6 +36,8 @@ def load_config() -> dict:
     volc["access_token"] = volc.get("access_token") or os.environ.get("VOLC_ACCESS_TOKEN", "")
     pan = cfg.setdefault("pan", {"base_url": "https://pan.ezv.cc"})
     pan["api_key"] = pan.get("api_key") or os.environ.get("PAN_API_KEY", "")
+    ds = cfg.setdefault("deepseek", {})
+    ds["api_key"] = ds.get("api_key") or os.environ.get("DEEPSEEK_API_KEY", "")
     cfg["root"] = str(_ROOT)
     data_dir = Path(cfg["storage"]["data_dir"])
     if not data_dir.is_absolute():

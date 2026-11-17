@@ -66,6 +66,7 @@ class TTSProvider(Protocol):
 | provider | 说明 |
 | --- | --- |
 | `mock` | `MockASR` 返回空列表（前端据此提示手动输入）；`MockTTS` 生成与字数相关的正弦音，时长带随机抖动，用于无 Key 冒烟 |
+| `deepseek` | 仅 ASR：`POST /v1/tools/asr` 同步上传（转 16k 单声道 PCM WAV），返回 `text` + `duration_ms`；**无字级时间戳**，词级时间按字符数均分估算。单次 ≤120s、≤8MiB |
 | `volc` | ASR：标准版录音文件识别（submit → 轮询 query），音频经 `pan.ezv.cc` 换成公开 URL，解析 `utterances[].words` 毫秒时间戳；TTS：`seed-audio-1.0`，参考音频 base64 随请求携带，`speech_rate=(speed-1)*100` |
 
 新增实现：在 `providers/` 加文件实现上述两个方法，再到 `providers/registry.py` 的 `_instantiate` 里注册名字，最后改 `config.yaml` 的 `provider`。初始化抛异常会按 `fallback` 自动回落并在 `/api/health` 的 `warnings` 里提示。

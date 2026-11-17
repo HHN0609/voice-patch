@@ -9,7 +9,7 @@
 ## 功能
 
 - **波形选区**：鼠标拖拽框选口误区间；选区自动向两侧静音边界扩展，腾出可用时长。
-- **字级转写**：火山引擎录音文件识别，返回每个字的时间戳，点字可跳转播放。
+- **区间转写**：默认 DeepSeek 语音识别（同步上传、整段文本）；该接口不返回字级时间戳，字位置按时长均分估算，点字为近似跳转。可切回 `volc` 取真实字级时间戳。
 - **文本规整**：`1999.99元`、`35%`、`2026年` 等自动转成 TTS 稳定的中文读法。
 - **时长适配**：自动求最优语速（0.90~1.10）→ 一次生成 3 个 take → 可选 5% 局部变速 → 取偏差最小者。
 - **音色一致**：默认自动挑一段能量最高的原声做参考音；多人视频可手动框选“该说话人”的一段话，强制按此音色克隆。
@@ -90,16 +90,18 @@ npm run build    # 产物输出到 ../web ，随后刷新 /ui/ 即可看到最�
 
 | 变量 | 用途 |
 | --- | --- |
-| `VOLC_API_KEY` | 火山引擎新版控制台 API Key（`X-Api-Key` 单头鉴权，推荐），TTS + ASR 共用 |
+| `DEEPSEEK_API_KEY` | DeepSeek API Key，默认 ASR provider 使用 |
+| `VOLC_API_KEY` | 火山引擎新版控制台 API Key（`X-Api-Key` 单头鉴权，推荐），TTS 必填；切回 volc ASR 时也用它 |
 | `VOLC_APP_ID` / `VOLC_ACCESS_TOKEN` | 旧版控制台双头鉴权（可选） |
-| `PAN_API_KEY` | 文件中转网盘 `pan.ezv.cc` 的 Key：ASR 需要公开 URL，本地音频先传这里中转 |
+| `PAN_API_KEY` | 文件中转网盘 `pan.ezv.cc` 的 Key：仅 `volc` ASR 需要公开 URL，本地音频先传这里中转 |
 
 ### config.yaml
 
 | 配置 | 说明 |
 | --- | --- |
-| `asr.provider` / `tts.provider` | `volc`（真实云服务）或 `mock`（无 Key 联调） |
+| `asr.provider` / `tts.provider` | ASR：`deepseek`（默认）/ `volc` / `mock`；TTS：`volc` / `mock` |
 | `asr.fallback` / `tts.fallback` | provider 初始化失败时回落的实现 |
+| `deepseek.base_url` | DeepSeek ASR 接口地址，默认 `https://api.deepseek.com/v1/tools/asr` |
 | `tts.takes` | 每次合成生成几个候选，默认 3 |
 | `volc.voice_type` | 指定音色 ID；留空则用参考音频克隆 |
 | `render.speed_range` | 自动语速边界，默认 `[0.90, 1.10]` |
@@ -154,8 +156,8 @@ voice-patch/
 │  ├─ orchestrator.py     # 10 步流水线编排
 │  ├─ config.py           # 配置加载（env > .env > yaml）
 │  ├─ db.py               # SQLite：projects / segments / takes
-│  ├─ pan_upload.py       # pan.ezv.cc 中转上传（ASR 取公开 URL）
-│  ├─ providers/          # base 协议 + volc_asr / volc_tts / mock + registry
+│  ├─ pan_upload.py       # pan.ezv.cc 中转上传（仅 volc ASR 取公开 URL 时用）
+│  ├─ providers/          # base 协议 + deepseek_asr / volc_asr / volc_tts / mock + registry
 │  ├─ media/ffmpeg_ops.py # ffmpeg 封装
 │  ├─ audio/fitting.py    # 自动语速、take 适配与择优
 │  └─ text/normalize.py   # 数字/百分比/年份中文读法规整
@@ -186,5 +188,6 @@ python scripts/http_test.py
 - 一步只替换一个选区；多口误建议逐个渲染。
 - 等长替换受窗口长度硬约束，大幅扩写（如“一千”→ 一长串数字）无法真正等长，会提示 D 类。
 - 视频流 `-c:v copy`，导出速度取决于音频处理，不会二次损失画质。
-- ASR 走 `pan.ezv.cc` 中转并等待审核，单次约 15~30 秒；转写完成后自动回收中转文件。
+- 默认 ASR 为 DeepSeek：单次上传 ≤120s、≤8MiB，只返回整段文本，**字级时间戳是按字符均分估算的**（点字为近似跳转）；需要真实时间戳时把 `asr.provider` 改回 `volc`。
+- `volc` ASR 走 `pan.ezv.cc` 中转并等待审核，单次约 15~30 秒；转写完成后自动回收中转文件。
 - `data/`、`.env` 已在 `.gitignore` 中，密钥与素材不会被提交。
