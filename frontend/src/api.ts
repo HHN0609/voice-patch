@@ -44,7 +44,7 @@ export interface SynthResp {
   speed: number
   window: number
   takes: Take[]
-  voice_source: 'user' | 'auto'
+  voice_source: 'user' | 'mispeak'
   overflow: boolean
   delta: number
   d_class: boolean

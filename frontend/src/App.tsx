@@ -23,11 +23,20 @@ export default function App() {
   const [playing, setPlaying] = useState(false)
   const videoRef = useRef<HTMLVideoElement>(null)
   const wsRef = useRef<WaveSurfer | null>(null)
+  // 最新光标位置（试听/拖动时 state 更新是异步的，播放前用它对齐）
+  const cursorRef = useRef(0)
 
   // 选区
   const [mode, setMode] = useState<RegionMode | null>('mispeak')
   const [mispeak, setMispeak] = useState<RegionSel | null>(null)
   const [voice, setVoice] = useState<RegionSel | null>(null)
+
+  // 选区试听（独立 Audio，不干扰波形/视频的播放状态）
+  const previewRef = useRef<HTMLAudioElement | null>(null)
+  const previewingRef = useRef(false)
+  const previewRafRef = useRef(0)
+  const previewTimerRef = useRef<number | undefined>(undefined)
+  const [previewing, setPreviewing] = useState<RegionMode | ''>('')
 
   // 转写 / 合成 / 渲染
   const [seg, setSeg] = useState<TranscribeResp | null>(null)
@@ -62,9 +71,22 @@ export default function App() {
     wsRef.current = ws
   }, [])
 
+  // 试听时停止跟随：暂停播放、取消进度跟随、复位按钮
+  const stopPreview = useCallback(() => {
+    previewRef.current?.pause()
+    previewingRef.current = false
+    cancelAnimationFrame(previewRafRef.current)
+    previewRafRef.current = 0
+    window.clearTimeout(previewTimerRef.current)
+    previewTimerRef.current = undefined
+    setPreviewing('')
+  }, [])
+
   // 波形时间更新：同步光标；暂停状态下顺带把画面帧对齐到同一位置
   const onCursor = useCallback((t: number) => {
+    cursorRef.current = t
     setCursor(t)
+    if (previewingRef.current) return // 试听只跟随进度条，不逐帧拖动画面
     const v = videoRef.current
     if (v && !wsRef.current?.isPlaying() && Math.abs(v.currentTime - t) > 0.1) {
       v.currentTime = t
@@ -75,12 +97,72 @@ export default function App() {
   const seekTo = (t: number) => {
     const ws = wsRef.current
     if (!ws) return
+    if (previewingRef.current) stopPreview()
     const nt = Math.max(0, Math.min(t, duration || t))
     ws.setTime(nt)
     const v = videoRef.current
     if (v) v.currentTime = nt
+    cursorRef.current = nt
     setCursor(nt)
   }
+
+  // 试听选区：播完自动停；与主播放互斥
+  const previewRange = (kind: RegionMode, sel: RegionSel | null) => {
+    if (!sel || !project) return
+    if (previewing === kind) {
+      stopPreview()
+      return
+    }
+    const ws = wsRef.current
+    if (ws?.isPlaying()) {
+      ws.pause()
+      setPlaying(false)
+    }
+    videoRef.current?.pause()
+    ws?.setTime(sel.t0) // 光标/画面定位到选区开头
+    previewingRef.current = true
+
+    let a = previewRef.current
+    if (!a) {
+      a = new Audio()
+      a.addEventListener('ended', () => stopPreview())
+      previewRef.current = a
+    }
+    if (!a.src.endsWith(project.audio_url)) a.src = project.audio_url
+    a.currentTime = sel.t0
+    a.ontimeupdate = () => {
+      if (a && a.currentTime >= sel.t1) stopPreview()
+    }
+    a.play().catch(() => stopPreview())
+    setPreviewing(kind)
+    // 到选区终点精确停止（timeupdate 粒度约 250ms，会拖出选区外）
+    window.clearTimeout(previewTimerRef.current)
+    previewTimerRef.current = window.setTimeout(
+      () => stopPreview(), Math.max(0, (sel.t1 - sel.t0) * 1000) + 30,
+    )
+
+    // 进度条 / 波形光标跟随试听位置
+    const tick = () => {
+      const el = previewRef.current
+      if (!el || el.paused) {
+        previewRafRef.current = 0
+        return
+      }
+      setCursor(el.currentTime)
+      cursorRef.current = el.currentTime
+      wsRef.current?.setTime(el.currentTime)
+      previewRafRef.current = requestAnimationFrame(tick)
+    }
+    cancelAnimationFrame(previewRafRef.current)
+    previewRafRef.current = requestAnimationFrame(tick)
+  }
+
+  // 卸载时停掉试听与跟随
+  useEffect(() => () => {
+    previewRef.current?.pause()
+    window.clearTimeout(previewTimerRef.current)
+    cancelAnimationFrame(previewRafRef.current)
+  }, [])
 
   // 波形 → 视频 同步
   useEffect(() => {
@@ -109,9 +191,11 @@ export default function App() {
       ws.pause()
       v?.pause() // 显式暂停视频，不依赖同步循环（循环会被 playing=false 取消）
     } else {
-      if (v && Math.abs(v.currentTime - ws.getCurrentTime()) > 0.18) {
-        v.currentTime = ws.getCurrentTime()
-      }
+      stopPreview()
+      // 试听后播放器的内部位置可能落后于光标，先强制对齐再播放
+      const t = cursorRef.current
+      if (Math.abs(ws.getCurrentTime() - t) > 0.01) ws.setTime(t)
+      if (v) v.currentTime = t
       void ws.play()
     }
     setPlaying(ws.isPlaying())
@@ -250,8 +334,22 @@ export default function App() {
           </div>
         </div>
         <div className="sel-info">
-          <span>口误区间：{mispeak ? `${fmt(mispeak.t0)} → ${fmt(mispeak.t1)}` : '未选'}</span>
-          <span>参考音色：{voice ? `${fmt(voice.t0)} → ${fmt(voice.t1)}` : '未选（自动挑选）'}</span>
+          <span>
+            口误区间：{mispeak ? `${fmt(mispeak.t0)} → ${fmt(mispeak.t1)}` : '未选'}
+            {mispeak && (
+              <button className="btn mini" onClick={() => previewRange('mispeak', mispeak)}>
+                {previewing === 'mispeak' ? '■ 停止' : '▶ 试听'}
+              </button>
+            )}
+          </span>
+          <span>
+            参考音色：{voice ? `${fmt(voice.t0)} → ${fmt(voice.t1)}` : '未选（默认用口误区间）'}
+            {voice && (
+              <button className="btn mini" onClick={() => previewRange('voice', voice)}>
+                {previewing === 'voice' ? '■ 停止' : '▶ 试听'}
+              </button>
+            )}
+          </span>
           <button
             className="btn primary"
             disabled={!mispeak || !!busy}
@@ -308,7 +406,7 @@ export default function App() {
               ? '⚠ 新文本比窗口长太多（D 类），等长替换质量有限，建议精简文本（如口语化数字）'
               : synth.overflow
                 ? '⚠ 时长有轻微溢出，take 已做适配，请试听确认'
-                : `✓ 时长匹配良好（偏差 ${synth.delta.toFixed(2)}s）· 参考音来源：${synth.voice_source === 'user' ? '你选中的区间' : '自动挑选'}`}
+                : `✓ 时长匹配良好（偏差 ${synth.delta.toFixed(2)}s）· 参考音来源：${synth.voice_source === 'user' ? '你选中的区间' : '口误区间'}`}
           </div>
           <div className="takes">
             {synth.takes.map((t) => (

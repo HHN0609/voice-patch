@@ -37,7 +37,7 @@ uvicorn backend.main:app --host 127.0.0.1 --port 8765 --reload
 | [1] | `create_project` | 保存上传视频 → `ffprobe` 取时长 → 抽 48kHz 双声道 WAV → 写 `projects` |
 | [2][3] | `expand_region` | 用 `silencedetect` 找静音，把选区向外扩到最近静音边界（受 `region_expand_max` 限制） |
 | [4] | `transcribe_segment` | 裁切选区音频 → ASR → 规整文本 → 写 `segments`（保存用户框选与扩展后窗口） |
-| [5]~[8] | `synthesize_segment` | 参考音频准备（用户框选 / RMS 自动挑选）→ 克隆 → 探时长求语速 → 生成 N 个 take → 变速对齐 → 写 `takes` |
+| [5]~[8] | `synthesize_segment` | 参考音频准备（用户框选，未选则用口误区间、不足 2.5s 向两侧补足）→ 克隆 → 探时长求语速 → 生成 N 个 take → 变速对齐 → 写 `takes` |
 | [9][10] | `render_segment` | 切头/尾 → 等功率交叉淡化拼接 → 底噪垫床 → 响度测量+归一 → 换轨封装 `patch_final.mp4` |
 
 `synthesize_segment` 返回值里两个关键标记：

@@ -75,26 +75,23 @@ def transcribe_segment(pid: str, t0: float, t1: float) -> dict:
 
 
 # ------------------------------------------------ [6][7][8] 时长适配/参考音/TTS
-def pick_ref_audio(audio: str, T0: float, T1: float, want_len: float) -> str:
-    """参考音挑选（文档 §5.3 简化版）：框选区外 RMS 最高的定长窗口。"""
-    dur = ff.duration(audio)
-    profile = ff.rms_profile(audio, win_s=0.5)
-    lo, hi = max(T0 - 1.0, 0.0), min(T1 + 1.0, dur)
-    n = max(int(want_len / 0.5), 1)
-    best_t, best_score = 0.0, -1.0
-    for i in range(len(profile) - n + 1):
-        t = profile[i][0]
-        if t + want_len > dur:
-            break
-        if t + want_len > lo and t < hi:  # 与重录区重叠，跳过
-            continue
-        score = sum(r for _, r in profile[i:i + n]) / n
-        if score > best_score:
-            best_score, best_t = score, t
-    ref = str(Path(audio).parent / f"ref_{new_id()}.wav")
-    end = min(best_t + want_len, dur)
-    ff.cut(audio, best_t, end, ref)
+_REF_MIN_LEN = 2.5  # 参考音最短时长（秒），过短时向两侧补足
+
+
+def cut_ref(proj: dict, start: float, end: float) -> str:
+    """从原音轨裁一段参考音，返回文件路径。"""
+    ref = str(Path(proj["audio_path"]).parent / f"ref_{new_id()}.wav")
+    ff.cut(proj["audio_path"], start, end, ref)
     return ref
+
+
+def ref_window(T0: float, T1: float, duration: float) -> tuple[float, float]:
+    """未框选参考音时的参考窗口：口误区间本身；不足 _REF_MIN_LEN 时向两侧补足。"""
+    if T1 - T0 >= _REF_MIN_LEN:
+        return T0, T1
+    center = (T0 + T1) / 2
+    start = max(0.0, min(center - _REF_MIN_LEN / 2, duration - _REF_MIN_LEN))
+    return round(start, 4), round(min(duration, start + _REF_MIN_LEN), 4)
 
 
 def synthesize_segment(sid: str, text: str, speed: float | None = None,
@@ -110,25 +107,23 @@ def synthesize_segment(sid: str, text: str, speed: float | None = None,
     window = seg["T1"] - seg["T0"] + 2 * RENDER["crossfade_ms"] / 1000.0  # 预留拼接淡化量
 
     tts = registry.get_tts()
-    # 参考音：优先用用户在波形上选中的"同说话人"区间（多说话人视频必需）；
-    # 未选时回退到自动 RMS 挑选。用户指定时强制重新克隆，避免缓存到别人的音色。
+    # 参考音：优先用户框选的“同说话人”区间（多人视频必需）；
+    # 未选时默认用口误区间本身（同一说话人、同一声学环境），过短则向两侧补足。
     if ref_t0 is not None and ref_t1 is not None:
         if ref_t1 - ref_t0 < 1.0:
             raise ValueError("参考音区间太短（<1s），请框选一段完整的话")
-        if not (ref_t1 <= seg["T0"] or ref_t0 >= seg["T1"]):
+        # 只跟用户看得见的红区比较；T0/T1 是静音扩展后的隐藏窗口，不能拿来判重叠
+        if not (ref_t1 <= seg["t0_sel"] or ref_t0 >= seg["t1_sel"]):
             raise ValueError("参考音区间不能与口误区间重叠")
-        ref = str(Path(proj["audio_path"]).parent / f"ref_{new_id()}.wav")
-        ff.cut(proj["audio_path"], ref_t0, min(ref_t1, proj["duration"]), ref)
-        voice_id = tts.clone(ref)
-        execute("UPDATE projects SET voice_id=? WHERE id=?", (voice_id, proj["id"]))
+        ref = cut_ref(proj, ref_t0, min(ref_t1, proj["duration"]))
         voice_source = "user"
     else:
-        ref = pick_ref_audio(proj["audio_path"], seg["T0"], seg["T1"], RENDER["ref_pick_len"])
-        voice_id = proj.get("voice_id")
-        if not voice_id:
-            voice_id = tts.clone(ref)
-            execute("UPDATE projects SET voice_id=? WHERE id=?", (voice_id, proj["id"]))
-        voice_source = "auto"
+        r0, r1 = ref_window(seg["T0"], seg["T1"], proj["duration"])
+        ref = cut_ref(proj, r0, r1)
+        voice_source = "mispeak"
+
+    voice_id = tts.clone(ref)
+    execute("UPDATE projects SET voice_id=? WHERE id=?", (voice_id, proj["id"]))
 
     takes = takes or CFG["tts"].get("takes", 3)
     # 第一遍用 1.0 探时长 → 自动求速；后续 take 都按该速度生成

@@ -155,26 +155,3 @@ def make_test_media(dst_video: str, seconds: float = 6.0) -> None:
     _run(["-y", "-f", "lavfi", "-i", f"testsrc=duration={seconds}:size=320x240:rate=15",
           "-f", "lavfi", "-i", f"sine=frequency=440:duration={seconds}",
           "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", dst_video])
-
-
-def rms_profile(wav: str, win_s: float = 0.5) -> list[tuple[float, float]]:
-    """用 wave 模块计算每 win_s 的 RMS 能量，用于参考音频挑选。要求 pcm_s16le。"""
-    import array
-    import math
-    import wave
-    with wave.open(wav, "rb") as w:
-        nch, sw, fr = w.getnchannels(), w.getsampwidth(), w.getframerate()
-        if sw != 2:
-            raise ValueError("rms_profile 仅支持 pcm_s16le")
-        frames_per_win = int(fr * win_s)
-        out: list[tuple[float, float]] = []
-        while True:
-            raw = w.readframes(frames_per_win)
-            if not raw:
-                break
-            samples = array.array("h")
-            samples.frombytes(raw[: len(raw) // 2 * 2])
-            if samples:
-                rms = math.sqrt(sum(s * s for s in samples) / len(samples))
-                out.append((w.tell() / fr, rms))
-    return out

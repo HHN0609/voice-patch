@@ -31,7 +31,6 @@ render:
   tolerance_abs: 0.150      # 时长偏差容忍：绝对值
   tolerance_rel: 0.08       # 或相对值（取宽）
   region_expand_max: 0.5    # 选区自动向两侧扩展上限（秒）
-  ref_pick_len: 10.0        # 参考音频挑选窗口长度（秒）
 
 storage:
   data_dir: data
