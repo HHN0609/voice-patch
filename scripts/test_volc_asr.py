@@ -12,7 +12,7 @@ TMP = Path(CFG["storage"]["data_dir"]) / "_volc_test"
 
 
 def main() -> None:
-    if not (CFG["volc"].get("api_key") or CFG["volc"].get("access_token")):
+    if not CFG["volc"].get("api_key"):
         print("SKIP: .env 里没有密钥")
         return
     from backend.providers.volc_asr import VolcASR

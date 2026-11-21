@@ -32,8 +32,6 @@ def load_config() -> dict:
         cfg = yaml.safe_load(f)
     volc = cfg.setdefault("volc", {})
     volc["api_key"] = volc.get("api_key") or os.environ.get("VOLC_API_KEY", "")
-    volc["appid"] = volc.get("appid") or os.environ.get("VOLC_APP_ID", "")
-    volc["access_token"] = volc.get("access_token") or os.environ.get("VOLC_ACCESS_TOKEN", "")
     pan = cfg.setdefault("pan", {"base_url": "https://pan.ezv.cc"})
     pan["api_key"] = pan.get("api_key") or os.environ.get("PAN_API_KEY", "")
     ds = cfg.setdefault("deepseek", {})

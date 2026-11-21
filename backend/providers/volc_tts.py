@@ -1,8 +1,7 @@
 """火山引擎·音频生成（豆包 seed-audio-1.0，HTTP 非流式）客户端。
 
 文档：https://docs.volcengine.com/docs/doubao-voice/audio-generation-http
-- 新版控制台：X-Api-Key 单头鉴权（推荐，无需 app_id）
-- 旧版控制台：X-Api-App-Id + X-Api-Access-Key 双头鉴权
+- 鉴权：X-Api-Key 单头（新版控制台 API Key）
 - 声音克隆方式：参考音频随请求携带（references[].audio_data ≤30s/≤10MB），
   text_prompt 中用 @音频1 引用；也可用 speaker 传音色 ID（复刻音色或 2.0 音色）
 - 语速：speech_rate ∈ [-50,100]，rate = (speed-1)*100（-50 即 0.5 倍速）
@@ -28,26 +27,14 @@ class VolcTTS:
     def __init__(self) -> None:
         v = CFG["volc"]
         self.api_key = v.get("api_key") or ""
-        self.appid = v.get("appid") or ""
-        self.token = v.get("access_token") or ""
         self.speaker = v.get("voice_type") or ""
-        if self.appid and self.token:
-            self.auth = ("dual", self.appid, self.token)      # 旧版双头
-        elif self.api_key or self.token:
-            # 新版单头：仅填了 access_token 时也按 X-Api-Key 兜底（实测可用）
-            self.auth = ("single", self.api_key or self.token)
-        else:
-            raise RuntimeError("火山 TTS 未配置：请在 .env 填 VOLC_API_KEY（新版控制台，"
-                               "推荐，无需 app_id）或 VOLC_APP_ID + VOLC_ACCESS_TOKEN（旧版）")
+        if not self.api_key:
+            raise RuntimeError("火山 TTS 未配置：请在 .env 填 VOLC_API_KEY（新版控制台 API Key）")
 
     def _headers(self) -> dict:
-        h = {"Content-Type": "application/json",
-             "X-Api-Request-Id": uuid.uuid4().hex}
-        if self.auth[0] == "single":
-            h["X-Api-Key"] = self.auth[1]
-        else:
-            h["X-Api-App-Id"], h["X-Api-Access-Key"] = self.auth[1], self.auth[2]
-        return h
+        return {"Content-Type": "application/json",
+                "X-Api-Key": self.api_key,
+                "X-Api-Request-Id": uuid.uuid4().hex}
 
     def clone(self, ref_audio: str, ref_text: str | None = None) -> str:
         """seed-audio 无需预注册音色：返回参考音频标记，synthesize 时随请求携带。"""

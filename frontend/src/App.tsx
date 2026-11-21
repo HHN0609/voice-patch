@@ -60,7 +60,7 @@ export default function App() {
     setError('')
     setBusy('上传并抽轨中…')
     try {
-      const p = await api.uploadVideo(file, file.name.replace(/\.[^.]+$/, ''))
+      const p = await api.uploadVideo(file, file.name) // 保留后缀，界面直接显示文件名
       setProject(p)
       setStage('work')
     } catch (e) {
@@ -331,22 +331,24 @@ export default function App() {
         <button className="btn ghost reupload" onClick={resetToUpload}>重新上传</button>
       </header>
 
-      {/* 1. 视频画面 + 波形 */}
+      {/* 1. 画面 + 波形（纯音频项目没有画面，只显示波形与操作区） */}
       <section className="card">
         <div className="video-row">
-          <video
-            ref={videoRef}
-            src={project.video_url}
-            className="video"
-            muted // 声音统一由波形播放器出，视频轨静音避免双声
-            onLoadedMetadata={(e) => { e.currentTarget.muted = true }}
-            onTimeUpdate={(e) => {
-              // 视频暂停拖动时反向同步光标（拖进度条场景）；试听期间由试听 tick 主导，不反向同步
-              if (previewingRef.current) return
-              const v = e.currentTarget
-              if (!wsRef.current?.isPlaying()) wsRef.current?.setTime(v.currentTime)
-            }}
-          />
+          {project.has_video && (
+            <video
+              ref={videoRef}
+              src={project.video_url}
+              className="video"
+              muted // 声音统一由波形播放器出，视频轨静音避免双声
+              onLoadedMetadata={(e) => { e.currentTarget.muted = true }}
+              onTimeUpdate={(e) => {
+                // 视频暂停拖动时反向同步光标（拖进度条场景）；试听期间由试听 tick 主导，不反向同步
+                if (previewingRef.current) return
+                const v = e.currentTarget
+                if (!wsRef.current?.isPlaying()) wsRef.current?.setTime(v.currentTime)
+              }}
+            />
+          )}
           <div className="video-side">
             <button className="btn primary" onClick={togglePlay}>
               {playing ? '⏸ 暂停' : '▶ 播放'}
@@ -664,7 +666,7 @@ function Upload({ onUpload, busy, error }: {
   return (
     <div className="app center">
       <h1>Voice patch · 口误修复</h1>
-      <p className="hint">上传含口误的视频，框选区间 → 改字 → 克隆音色重说 → 无缝拼回视频。</p>
+      <p className="hint">上传含口误的视频或音频，框选区间 → 改字 → 克隆音色重说 → 无缝拼回。</p>
       <label
         className={`drop ${drag ? 'over' : ''}`}
         onDragOver={(e) => { e.preventDefault(); setDrag(true) }}
@@ -678,14 +680,14 @@ function Upload({ onUpload, busy, error }: {
       >
         <input
           type="file"
-          accept="video/*"
+          accept="video/*,audio/*"
           hidden
           onChange={(e) => {
             const f = e.target.files?.[0]
             if (f) onUpload(f)
           }}
         />
-        {busy || '点击选择 或 拖拽视频到此处'}
+        {busy || '点击选择 或 拖拽视频 / 音频到此处'}
       </label>
       {error && <div className="err">{error}</div>}
     </div>

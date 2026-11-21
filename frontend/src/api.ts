@@ -3,6 +3,8 @@ export interface ProjectInfo {
   id: string
   name: string
   duration: number
+  /** false = 上传的是纯音频，画面为后端补的黑底占位轨 */
+  has_video: boolean
   video_url: string
   audio_url: string
 }

@@ -18,7 +18,8 @@ CREATE TABLE IF NOT EXISTS projects(
   audio_path TEXT,
   duration REAL,
   voice_id TEXT,
-  created_at REAL
+  created_at REAL,
+  has_video INTEGER DEFAULT 1   -- 0 = 用户上传的是纯音频（画面为补的黑底占位轨）
 );
 CREATE TABLE IF NOT EXISTS segments(
   id TEXT PRIMARY KEY,
@@ -51,6 +52,13 @@ CREATE TABLE IF NOT EXISTS takes(
 """
 
 
+def _migrate(c: sqlite3.Connection) -> None:
+    """老库补列：CREATE TABLE IF NOT EXISTS 不会修改已存在的表结构。"""
+    cols = {r["name"] for r in c.execute("PRAGMA table_info(projects)")}
+    if "has_video" not in cols:
+        c.execute("ALTER TABLE projects ADD COLUMN has_video INTEGER DEFAULT 1")
+
+
 def conn() -> sqlite3.Connection:
     global _CONN
     if _CONN is None:
@@ -58,6 +66,7 @@ def conn() -> sqlite3.Connection:
         _CONN = sqlite3.connect(db_path, check_same_thread=False)
         _CONN.row_factory = sqlite3.Row
         _CONN.executescript(_SCHEMA)
+        _migrate(_CONN)
         _CONN.commit()
     return _CONN
 

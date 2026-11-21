@@ -24,26 +24,16 @@ class VolcASR:
 
     def __init__(self) -> None:
         v = CFG["volc"]
-        api_key = v.get("api_key") or ""
-        appid, token = v.get("appid") or "", v.get("access_token") or ""
-        if appid and token:
-            self.auth = ("dual", appid, token)
-        elif api_key or token:
-            self.auth = ("single", api_key or token)  # 仅填 access_token 时按 X-Api-Key 兜底
-        else:
-            raise RuntimeError("火山 ASR 未配置：请在 .env 填 VOLC_API_KEY（新版控制台，"
-                               "推荐，无需 app_id）或 VOLC_APP_ID + VOLC_ACCESS_TOKEN（旧版）")
+        self.api_key = v.get("api_key") or ""
+        if not self.api_key:
+            raise RuntimeError("火山 ASR 未配置：请在 .env 填 VOLC_API_KEY（新版控制台 API Key）")
 
     def _headers(self, task_id: str) -> dict:
-        h = {"Content-Type": "application/json",
-             "X-Api-Resource-Id": RESOURCE_ID,
-             "X-Api-Request-Id": task_id,
-             "X-Api-Sequence": "-1"}
-        if self.auth[0] == "single":
-            h["X-Api-Key"] = self.auth[1]
-        else:
-            h["X-Api-App-Key"], h["X-Api-Access-Key"] = self.auth[1], self.auth[2]
-        return h
+        return {"Content-Type": "application/json",
+                "X-Api-Key": self.api_key,
+                "X-Api-Resource-Id": RESOURCE_ID,
+                "X-Api-Request-Id": task_id,
+                "X-Api-Sequence": "-1"}
 
     def transcribe(self, wav_path: str, lang: str = "zh",
                    word_timestamps: bool = True) -> list[Word]:

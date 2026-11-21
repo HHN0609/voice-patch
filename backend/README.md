@@ -35,7 +35,7 @@ uvicorn backend.main:app --host 127.0.0.1 --port 8765 --reload
 
 | 步骤 | 函数 | 说明 |
 | --- | --- | --- |
-| [1] | `create_project` | 保存上传视频 → `ffprobe` 取时长 → 抽 48kHz 双声道 WAV → 写 `projects` |
+| [1] | `create_project` | 保存上传视频/音频 → 纯音频补黑底占位画面 → `ffprobe` 取时长 → 抽 48kHz 双声道 WAV → 写 `projects` |
 | [2][3] | `trim_words` | 替换区间 = 用户框选区间（不外扩）；ASR 超出选区终点的词会被裁掉 |
 | [4] | `transcribe_segment` | 裁切选区音频 → ASR → 规整文本 → 测语音跨度 → 写 `segments` |
 | [5]~[8] | `synthesize_segment` | 参考音频准备（用户框选，未选则用口误区间、不足 2.5s 向两侧补足）→ 克隆 → 探时长求语速 → 生成 N 个 take → 变速对齐 → 写 `takes` |
@@ -72,12 +72,12 @@ class TTSProvider(Protocol):
 
 新增实现：在 `providers/` 加文件实现上述两个方法，再到 `providers/registry.py` 的 `_instantiate` 里注册名字，最后改 `config.yaml` 的 `provider`。初始化抛异常会按 `fallback` 自动回落并在 `/api/health` 的 `warnings` 里提示。
 
-鉴权：优先 `X-Api-Key` 单头（新版控制台）；`appid` + `access_token` 同时存在时走旧版双头。
+鉴权：火山统一用 `X-Api-Key` 单头（新版控制台 API Key）。
 
 ## 数据模型
 
 ```
-projects(id, name, video_path, audio_path, duration, voice_id, created_at)
+projects(id, name, video_path, audio_path, duration, voice_id, created_at, has_video)
 segments(id, project_id, t0_sel, t1_sel, T0, T1, text_raw, text_norm, status, created_at)
 takes(id, segment_id, take_no, text_norm, provider, voice_id, speed, seed,
       wav_path, raw_dur, final_dur, stretch, status, delta, selected, created_at)

@@ -31,12 +31,13 @@ def health() -> dict:
 
 @app.post("/api/projects")
 async def upload(file: UploadFile = File(...), name: str = "") -> dict:
-    suffix = Path(file.filename or "video.mp4").suffix
+    suffix = Path(file.filename or "media.mp4").suffix
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         shutil.copyfileobj(file.file, tmp)
         tmp_path = tmp.name
     try:
-        return orc.create_project(name or Path(file.filename or "project").stem, tmp_path)
+        # 默认用完整文件名（含后缀），前端直接展示即可
+        return orc.create_project(name or Path(file.filename or "project").name, tmp_path)
     except Exception as e:
         raise HTTPException(400, str(e))
 

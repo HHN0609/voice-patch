@@ -29,12 +29,11 @@ def make_ref_wav(path: Path, seconds: float = 3.0, freq: int = 220) -> None:
 
 def main() -> None:
     v = CFG["volc"]
-    api_key = v.get("api_key") or v.get("access_token") or ""
+    api_key = v.get("api_key") or ""
     if not api_key:
-        print("SKIP: .env 里没有 VOLC_API_KEY / VOLC_ACCESS_TOKEN")
+        print("SKIP: .env 里没有 VOLC_API_KEY")
         return
-    print(f"鉴权方式: X-Api-Key 单头（值来源: "
-          f"{'VOLC_API_KEY' if v.get('api_key') else 'VOLC_ACCESS_TOKEN 兜底'}）")
+    print("鉴权方式: X-Api-Key 单头")
 
     ref = TMP / "ref.wav"
     make_ref_wav(ref)

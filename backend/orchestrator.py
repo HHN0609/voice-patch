@@ -15,20 +15,33 @@ RENDER = CFG["render"]
 
 
 # ---------------------------------------------------------------- [1] 上传/抽轨
-def create_project(name: str, video_path: str) -> dict:
+def create_project(name: str, src_path: str) -> dict:
     pid = new_id()
     pdir = Path(CFG["storage"]["data_dir"]) / "projects" / pid
     pdir.mkdir(parents=True, exist_ok=True)
-    ext = Path(video_path).suffix or ".mp4"
-    dst_video = pdir / f"source{ext}"
-    shutil.move(video_path, dst_video)
-    info = ff.probe(str(dst_video))
+    ext = Path(src_path).suffix or ".mp4"
+    dst = pdir / f"source{ext}"
+    shutil.move(src_path, dst)
+    info = ff.probe(str(dst))
+
+    # 纯音频也能直接用：补一条黑底占位画面，下游抽轨/渲染/换轨统一按视频处理
+    src_has_video = ff.has_video(str(dst))
+    if not src_has_video:
+        wrapped = pdir / "source.mp4"
+        ff.wrap_audio_as_video(str(dst), str(wrapped), info["duration"])
+        if dst != wrapped:
+            dst.unlink(missing_ok=True)
+        dst = wrapped
+
     audio = pdir / "audio_48k.wav"
-    ff.extract_audio(str(dst_video), str(audio))
-    execute("INSERT INTO projects VALUES(?,?,?,?,?,?,?)",
-            (pid, name, str(dst_video), str(audio), info["duration"], None, now()))
+    ff.extract_audio(str(dst), str(audio))
+    execute("INSERT INTO projects(id,name,video_path,audio_path,duration,voice_id,created_at,has_video)"
+            " VALUES(?,?,?,?,?,?,?,?)",
+            (pid, name, str(dst), str(audio), info["duration"], None, now(),
+             1 if src_has_video else 0))
     return {"id": pid, "name": name, "duration": info["duration"],
-            "video_url": f"/data/projects/{pid}/{dst_video.name}",
+            "has_video": src_has_video,
+            "video_url": f"/data/projects/{pid}/{dst.name}",
             "audio_url": f"/data/projects/{pid}/{audio.name}"}
 
 
@@ -38,6 +51,7 @@ def get_project(pid: str) -> dict:
         raise KeyError(f"project {pid} 不存在")
     p["video_url"] = f"/data/projects/{pid}/{Path(p['video_path']).name}"
     p["audio_url"] = f"/data/projects/{pid}/{Path(p['audio_path']).name}"
+    p["has_video"] = bool(p.get("has_video", 1))
     return p
 
 

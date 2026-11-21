@@ -74,6 +74,37 @@ def probe(path: str | Path) -> dict:
     return _ffprobe_json(str(path))
 
 
+def has_video(path: str | Path) -> bool:
+    """文件是否含视频流（纯音频上传时用于决定是否补占位画面）。"""
+    _, fp = resolve_bins()
+    if fp is not None:
+        proc = subprocess.run(
+            [fp, "-v", "error", "-show_entries", "stream=codec_type",
+             "-of", "json", str(path)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        if proc.returncode == 0:
+            try:
+                streams = json.loads(proc.stdout).get("streams", [])
+            except json.JSONDecodeError:
+                streams = []
+            return any(s.get("codec_type") == "video" for s in streams)
+    proc = _run(["-i", str(path), "-f", "null", "-"])
+    return bool(re.search(r"Stream #\d+:\d+.*: Video:", proc.stderr))
+
+
+def wrap_audio_as_video(audio: str, dst: str, duration: float,
+                        width: int = 1280, height: int = 720) -> None:
+    """给纯音频补一条黑底视频轨，输出标准 mp4，下游渲染统一按视频处理。"""
+    prefix = ["-y", "-f", "lavfi", "-i", f"color=c=black:s={width}x{height}:r=25",
+              "-i", audio, "-map", "0:v:0", "-map", "1:a:0", "-pix_fmt", "yuv420p"]
+    suffix = ["-c:a", "aac", "-b:a", "192k", "-t", f"{duration:.4f}", "-shortest", dst]
+    try:
+        _run([*prefix, "-c:v", "libx264", "-preset", "veryfast", *suffix])
+    except RuntimeError:
+        # 部分 ffmpeg 构建没有 libx264，退回 mpeg4（同样可 -c:v copy 封装进 mp4）
+        _run([*prefix, "-c:v", "mpeg4", "-q:v", "5", *suffix])
+
+
 def duration(path: str | Path) -> float:
     return probe(path)["duration"]
 
