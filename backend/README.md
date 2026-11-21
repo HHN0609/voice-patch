@@ -26,7 +26,7 @@ uvicorn backend.main:app --host 127.0.0.1 --port 8765 --reload
 | `db.py` | SQLite（`data/voicepatch.db`），三张表 `projects` / `segments` / `takes` |
 | `providers/` | ASR / TTS 抽象与实现，见下节 |
 | `media/ffmpeg_ops.py` | ffmpeg/ffprobe 纯函数封装：探测、抽轨、裁切、静音检测、变速、交叉淡化、底噪混合、响度测量与应用、换轨封装 |
-| `audio/fitting.py` | 时长适配链：`auto_speed` 求语速、`fit_take` 单 take 适配、`pick_best` 择优 |
+| `audio/fitting.py` | 时长适配：`choose_speed` 选语速、`plan_pads` 用选区静音吸收差额、`pick_best` 择优 |
 | `text/normalize.py` | 文本规整：数字 / 百分比 / 年份 → 中文读法；`estimate_duration_zh` 粗估时长 |
 | `pan_upload.py` | `pan.ezv.cc` 分片上传 + 审核轮询 + 匿名 URL 验证 + 回收，供标准版 ASR 拉取音频 |
 
@@ -35,8 +35,8 @@ uvicorn backend.main:app --host 127.0.0.1 --port 8765 --reload
 | 步骤 | 函数 | 说明 |
 | --- | --- | --- |
 | [1] | `create_project` | 保存上传视频 → `ffprobe` 取时长 → 抽 48kHz 双声道 WAV → 写 `projects` |
-| [2][3] | `expand_region` | 用 `silencedetect` 找静音，把选区向外扩到最近静音边界（受 `region_expand_max` 限制） |
-| [4] | `transcribe_segment` | 裁切选区音频 → ASR → 规整文本 → 写 `segments`（保存用户框选与扩展后窗口） |
+| [2][3] | `trim_words` | 替换区间 = 用户框选区间（不外扩）；ASR 超出选区终点的词会被裁掉 |
+| [4] | `transcribe_segment` | 裁切选区音频 → ASR → 规整文本 → 测语音跨度 → 写 `segments` |
 | [5]~[8] | `synthesize_segment` | 参考音频准备（用户框选，未选则用口误区间、不足 2.5s 向两侧补足）→ 克隆 → 探时长求语速 → 生成 N 个 take → 变速对齐 → 写 `takes` |
 | [9][10] | `render_segment` | 切头/尾 → 等功率交叉淡化拼接 → 底噪垫床 → 响度测量+归一 → 换轨封装 `patch_final.mp4` |
 

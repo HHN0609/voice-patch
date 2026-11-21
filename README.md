@@ -8,10 +8,10 @@
 
 ## 功能
 
-- **波形选区**：鼠标拖拽框选口误区间；选区自动向两侧静音边界扩展，腾出可用时长。
+- **波形选区**：鼠标拖拽框选口误区间；替换区间与框选区间严格一致，不会动到没框到的音频。
 - **区间转写**：默认 DeepSeek 语音识别（同步上传、整段文本）；该接口不返回字级时间戳，字位置按时长均分估算，点字为近似跳转。可切回 `volc` 取真实字级时间戳。
 - **文本规整**：`1999.99元`、`35%`、`2026年` 等自动转成 TTS 稳定的中文读法。
-- **时长适配**：自动求最优语速（0.90~1.10）→ 一次生成 3 个 take → 可选 5% 局部变速 → 取偏差最小者。
+- **时长适配**：按选区内实际语音跨度适配（不是按框选总长）→ 语速在 `0.95~1.10` 内先吸收差额 → 仍不够时，语音偏长就占用选区自带的静音、偏短就多垫静音（都优先尾部）→ 一次生成 3 个 take 择优。语速与静音缓冲都用满仍塞不下才提示溢出。
 - **音色一致**：不框参考音时默认直接用口误区间那段原声（不足 2.5s 自动向两侧补足）；多人视频可手动框选“该说话人”的一段话，强制按此音色克隆。
 - **无缝渲染**：头/新音频/尾等功率交叉淡化 → 补底噪垫床 → EBU R128 响度归一 → 仅替换音轨（视频流 copy）。
 - **零 Key 可跑**：`mock` provider 可在没有任何云服务密钥时跑通全链路，便于联调。
@@ -104,10 +104,8 @@ npm run build    # 产物输出到 ../web ，随后刷新 /ui/ 即可看到最�
 | `deepseek.base_url` | DeepSeek ASR 接口地址，默认 `https://api.deepseek.com/v1/tools/asr` |
 | `tts.takes` | 每次合成生成几个候选，默认 3 |
 | `volc.voice_type` | 指定音色 ID；留空则用参考音频克隆 |
-| `render.speed_range` | 自动语速边界，默认 `[0.90, 1.10]` |
-| `render.stretch_range` | 允许的局部变速范围，默认 `[0.95, 1.05]`（需前端勾选） |
+| `render.speed_range` | 自动语速边界，默认 `[0.95, 1.10]` |
 | `render.tolerance_abs` / `tolerance_rel` | 时长偏差容忍（取宽） |
-| `render.region_expand_max` | 选区最多向两侧扩展多少秒 |
 | `render.crossfade_ms` / `noise_bed_gain` / `target_lufs` / `true_peak` | 拼接与响度参数 |
 | `storage.data_dir` | 数据根目录，默认 `data` |
 
@@ -138,7 +136,7 @@ npm run build    # 产物输出到 ../web ，随后刷新 /ui/ 即可看到最�
 | `GET` | `/api/projects/{pid}` | 项目详情 |
 | `GET` | `/api/projects/{pid}/audio.wav` | 项目音轨 |
 | `POST` | `/api/projects/{pid}/transcribe` | `{t0,t1}` 转写并返回字级时间戳 |
-| `POST` | `/api/segments/{sid}/synthesize` | `{text,speed?,allow_stretch?,takes?,ref_t0?,ref_t1?}` 合成候选 |
+| `POST` | `/api/segments/{sid}/synthesize` | `{text,speed?,takes?,ref_t0?,ref_t1?}` 合成候选 |
 | `POST` | `/api/segments/{sid}/render` | `{take_id}` 拼接、补底噪、响度归一、换轨导出 |
 
 静态资源：`/ui/*` 前端页面，`/data/*` 项目视频/音频。

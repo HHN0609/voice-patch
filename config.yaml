@@ -26,11 +26,9 @@ render:
   true_peak: -1.5
   crossfade_ms: 20          # 拼接等功率交叉淡化
   noise_bed_gain: 0.06      # 底噪垫床权重
-  speed_range: [0.90, 1.10] # 语速滑块边界（文档 §5.1 ①）
-  stretch_range: [0.95, 1.05] # 允许的局部变速范围（§5.1 ④，需用户勾选）
+  speed_range: [0.95, 1.10] # 自动语速边界（下限保守，避免放慢到拖沓）
   tolerance_abs: 0.150      # 时长偏差容忍：绝对值
   tolerance_rel: 0.08       # 或相对值（取宽）
-  region_expand_max: 0.5    # 选区自动向两侧扩展上限（秒）
 
 storage:
   data_dir: data

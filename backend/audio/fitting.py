@@ -1,8 +1,20 @@
-"""时长适配链（文档 §5.1）：语速微调 → 多 take 择优 →（可选）局部变速。
+"""时长适配：选语速 → 用选区自带的静音吸收差额 → 多 take 择优。
 
-D 类（Δ > 1.5 倍）在编排层拦截，进五选一路由；本模块只处理 A/B 类。
+语音长度与目标（选区内的语音跨度）不一致时按以下优先级处理：
+- 偏长：先加快语速（≤ speed_hi），仍不够再占用选区内的静音（优先尾部）
+- 偏短：先放慢语速（≥ speed_lo），仍不够就多垫静音（优先尾部）
+
+静音缓冲用尽仍塞不下时标记 overflow，由上层提示精简文本或扩大选区。
+语音变速统一用 ffmpeg atempo 完成，TTS 侧固定按原速生成，保证各 take 缩放一致。
 """
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
+
+
+@dataclass
+class PadPlan:
+    head_pad: float   # 头部静音
+    tail_pad: float   # 尾部静音
+    overflow: bool    # 语速与静音缓冲都用满仍塞不下
 
 
 @dataclass
@@ -13,42 +25,43 @@ class TakeFit:
     stretch: float
     final_dur: float
     status: str   # ok | overflow
-    delta: float  # final_dur - W
+    delta: float  # final_dur - window
 
     def to_dict(self) -> dict:
         return asdict(self)
 
 
-def auto_speed(raw_dur: float, window: float, lo: float = 0.90, hi: float = 1.10) -> float:
-    """求使 raw_dur/speed 最接近 window 的语速（speed>1 加速变短）。"""
-    if raw_dur <= 0 or window <= 0:
+def choose_speed(raw_speech: float, speech_target: float,
+                 lo: float = 0.95, hi: float = 1.10) -> float:
+    """求使 raw_speech/speed 最接近 speech_target 的语速（speed>1 加速变短）。"""
+    if raw_speech <= 0 or speech_target <= 0:
         return 1.0
-    return min(max(raw_dur / window, lo), hi)
+    return round(min(max(raw_speech / speech_target, lo), hi), 4)
 
 
-def fit_take(raw_dur: float, window: float, speed: float, allow_stretch: bool,
-             stretch_range: tuple[float, float], tol_abs: float, tol_rel: float) -> TakeFit:
-    """对单个 take 求最终适配方案。stretch>1 表示拉伸变长。"""
-    dur = raw_dur / speed
-    stretch = 1.0
-    tol = max(tol_abs, abs(window) * tol_rel)
+def plan_pads(speech_len: float, speech_target: float,
+              head_pad: float, tail_pad: float) -> PadPlan:
+    """把语音与目标的差额摊到两端静音：偏长吃静音、偏短多垫静音，都优先尾部。"""
+    head, tail = head_pad, tail_pad
+    diff = speech_len - speech_target
+    overflow = False
+    if diff > 0:
+        take = min(tail, diff)
+        tail -= take
+        diff -= take
+        take = min(head, diff)
+        head -= take
+        diff -= take
+        overflow = diff > 1e-6
+    elif diff < 0:
+        tail += -diff
+    return PadPlan(round(max(head, 0.0), 4), round(max(tail, 0.0), 4), overflow)
 
-    if abs(dur - window) > tol and allow_stretch:
-        ratio = dur / window  # >1 需拉长
-        lo, hi = stretch_range
-        if lo <= ratio <= hi:
-            stretch = ratio
-            dur = window
 
-    return TakeFit(take_no=0, raw_dur=raw_dur, speed=speed, stretch=round(stretch, 4),
-                   final_dur=dur, delta=round(dur - window, 4),
-                   status="ok" if abs(dur - window) <= tol else "overflow")
-
-
-def pick_best(fits: list[TakeFit], window: float) -> TakeFit:
+def pick_best(fits: list[TakeFit]) -> TakeFit:
     """优先取 ok 且 |delta| 最小者；全 overflow 时取 |delta| 最小者。"""
     if not fits:
         raise ValueError("没有可用的 take")
     oks = [f for f in fits if f.status == "ok"]
     pool = oks or fits
-    return min(pool, key=lambda f: (abs(f.delta), abs(f.final_dur - window)))
+    return min(pool, key=lambda f: abs(f.delta))

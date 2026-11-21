@@ -36,7 +36,7 @@ def main() -> None:
     print(f"[3] 选区 [2.0,3.2] → 扩展 [{seg['T0']},{seg['T1']}] · 窗口 {seg['window']}s")
 
     # [4] 改字合成：模拟“一千 → 1999.99 元”
-    synth = orc.synthesize_segment(sid, "1999.99元", allow_stretch=False)
+    synth = orc.synthesize_segment(sid, "1999.99元")
     print(f"[4] 语速 {synth['speed']}× · 窗口 {synth['window']}s · overflow={synth['overflow']} "
           f"· d_class={synth['d_class']} · delta={synth['delta']}s")
     best = min(synth["takes"], key=lambda t: abs(t["delta"]))

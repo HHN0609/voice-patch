@@ -449,7 +449,7 @@ export default function App() {
               自动语速
             </label>
             <input
-              type="range" min={0.9} max={1.1} step={0.01}
+              type="range" min={0.95} max={1.1} step={0.01}
               value={speed}
               disabled={speedAuto}
               onChange={(e) => setSpeed(Number(e.target.value))}

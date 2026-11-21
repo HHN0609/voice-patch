@@ -33,7 +33,7 @@ def main() -> None:
     sid = tr["segment_id"]
 
     sy = c.post(f"/api/segments/{sid}/synthesize",
-                json={"text": "1999.99元", "allow_stretch": True, "takes": 2}).json()
+                json={"text": "1999.99元", "takes": 2}).json()
     print(f"[synthesize] speed={sy['speed']} overflow={sy['overflow']} "
           f"d_class={sy['d_class']} takes={[(t['take_no'], t['final_dur'], t['status']) for t in sy['takes']]}")
 
