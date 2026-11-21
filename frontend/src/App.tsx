@@ -119,7 +119,6 @@ export default function App() {
       setPlaying(false)
     }
     videoRef.current?.pause()
-    ws?.setTime(sel.t0) // 光标/画面定位到选区开头
     previewingRef.current = true
 
     let a = previewRef.current
@@ -128,8 +127,14 @@ export default function App() {
       a.addEventListener('ended', () => stopPreview())
       previewRef.current = a
     }
-    if (!a.src.endsWith(project.audio_url)) a.src = project.audio_url
-    a.currentTime = sel.t0
+    if (!a.src.endsWith(project.audio_url)) {
+      a.src = project.audio_url
+      a.currentTime = sel.t0
+    }
+    // 暂停后继续：若仍停在选区内则从当前位置续播，否则回到选区开头
+    const resume = a.currentTime > sel.t0 + 0.01 && a.currentTime < sel.t1 - 0.01
+    if (!resume) a.currentTime = sel.t0
+    ws?.setTime(a.currentTime) // 光标/画面定位到播放起点
     a.ontimeupdate = () => {
       if (a && a.currentTime >= sel.t1) stopPreview()
     }
@@ -138,7 +143,7 @@ export default function App() {
     // 到选区终点精确停止（timeupdate 粒度约 250ms，会拖出选区外）
     window.clearTimeout(previewTimerRef.current)
     previewTimerRef.current = window.setTimeout(
-      () => stopPreview(), Math.max(0, (sel.t1 - sel.t0) * 1000) + 30,
+      () => stopPreview(), Math.max(0, (sel.t1 - a.currentTime) * 1000) + 30,
     )
 
     // 进度条 / 波形光标跟随试听位置
