@@ -114,9 +114,25 @@ header h1 { font-size: 20px; margin: 0; }
 /* AI 决策在上、语速在下，两行纵向排列 */
 .speed-stack { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
 .speed-line { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.speed-label { color: var(--dim); font-size: 13px; }
 .mono { font-variant-numeric: tabular-nums; }
 
-/* 开关：语速 / 自动语速 / AI 决策 统一用同一形态 */
+/* 语速三态单选：AI 决定 / 自动 / 手动 */
+.seg {
+  display: inline-flex; overflow: hidden;
+  border: 1px solid var(--line); border-radius: 8px;
+}
+.seg-btn {
+  padding: 3px 10px; border: none; border-right: 1px solid var(--line);
+  background: transparent; color: var(--dim);
+  font: inherit; font-size: 12px; cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.seg-btn:last-child { border-right: none; }
+.seg-btn:hover { color: var(--text); }
+.seg-btn.on { background: rgba(79, 140, 255, 0.18); color: var(--blue); }
+
+/* 开关：AI 决策等布尔项统一用同一形态 */
 .switch {
   position: relative; display: inline-flex; align-items: center;
   gap: 8px; cursor: pointer; color: var(--dim); font-size: 13px;
@@ -135,14 +151,15 @@ header h1 { font-size: 20px; margin: 0; }
   background: var(--dim);
   transition: transform 0.15s, background 0.15s;
 }
-.switch input:checked + .track {
+/* 用 ~ 而非 + ：文字在开关之前时 track 不再紧邻 input */
+.switch input:checked ~ .track {
   background: rgba(79, 140, 255, 0.4); border-color: var(--blue);
 }
-.switch input:checked + .track::after {
+.switch input:checked ~ .track::after {
   transform: translateX(16px); background: #fff;
 }
 .switch:hover .track { border-color: var(--blue); }
-.switch input:focus-visible + .track {
+.switch input:focus-visible ~ .track {
   outline: 2px solid var(--blue); outline-offset: 2px;
 }
 

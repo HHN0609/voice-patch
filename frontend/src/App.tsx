@@ -10,6 +10,8 @@ const fmt = (t: number) => {
 }
 
 type Stage = 'upload' | 'work'
+/** 语速由谁决定：AI 微调 / 规则计算 / 用户手动 */
+type SpeedMode = 'llm' | 'auto' | 'manual'
 
 export default function App() {
   const [stage, setStage] = useState<Stage>('upload')
@@ -41,10 +43,10 @@ export default function App() {
   const [seg, setSeg] = useState<TranscribeResp | null>(null)
   const [text, setText] = useState('')
   const [speed, setSpeed] = useState(1.0)
-  const [speedAuto, setSpeedAuto] = useState(true)
-  // AI 决策（静音分配 / 文本精简）；开启后默认连语速一起接管，可按需夺回
+  const [speedMode, setSpeedMode] = useState<SpeedMode>('auto')
   const [useLlm, setUseLlm] = useState(false)
-  const [llmOwnsSpeed, setLlmOwnsSpeed] = useState(true)
+  // AI 关闭时不存在「AI 决定」态，按规则自动计算处理（但记住用户选择，重开即恢复）
+  const speedModeEff: SpeedMode = useLlm ? speedMode : (speedMode === 'llm' ? 'auto' : speedMode)
   const [synth, setSynth] = useState<SynthResp | null>(null)
   const [selTake, setSelTake] = useState('')
   const [resultVideo, setResultVideo] = useState('')
@@ -254,14 +256,13 @@ export default function App() {
     setError('')
     setBusy('克隆音色并合成候选（3 次 TTS，约 1~2 分钟）…')
     try {
-      // AI 接管语速时传 null；用户夺回后按「自动/手动」照常传
-      const speedArg = useLlm && llmOwnsSpeed ? null : (speedAuto ? null : speed)
+      // 三态直接映射后端参数：手动才传具体值；非「AI 决定」时锁定 AI 的语速权
       const r = await api.synthesize(
         seg.segment_id, text,
-        speedArg,
+        speedModeEff === 'manual' ? speed : null,
         voice,
         useLlm,
-        useLlm && !llmOwnsSpeed,
+        speedModeEff !== 'llm',
       )
       setSynth(r)
       // 不回写 speed：手动值由用户掌握，自动/AI 的结果统一从 synth.speed 展示
@@ -305,9 +306,8 @@ export default function App() {
     setSeg(null)
     setText('')
     setSpeed(1.0)
-    setSpeedAuto(true)
+    setSpeedMode('auto')
     setUseLlm(false)
-    setLlmOwnsSpeed(true)
     setSynth(null)
     setSelTake('')
     setResultVideo('')
@@ -457,57 +457,53 @@ export default function App() {
                 <input
                   type="checkbox"
                   checked={useLlm}
-                  onChange={(e) => setUseLlm(e.target.checked)}
+                  onChange={(e) => {
+                    const on = e.target.checked
+                    setUseLlm(on)
+                    if (on) setSpeedMode('llm') // 打开 AI 决策时，语速默认交给 AI
+                  }}
                 />
-                <span className="track" />
                 AI 决策
+                <span className="track" />
               </label>
               {useLlm && <span className="hint">语速 · 静音分配 · 文本精简</span>}
             </div>
             <div className="speed-line">
-              {/* AI 参与时才需要选语速归属：开 = AI 接管，关 = 自己控制 */}
-              {useLlm && (
-                <label className="switch" title="开：语速交给 AI 决定；关：语速改由你控制（AI 仍管静音与文本）">
-                  <input
-                    type="checkbox"
-                    checked={llmOwnsSpeed}
-                    onChange={(e) => setLlmOwnsSpeed(e.target.checked)}
-                  />
-                  <span className="track" />
-                  语速
-                </label>
-              )}
-              {useLlm && llmOwnsSpeed ? (
-                <span className="hint">
-                  {synth ? `语速 1.00 → ${synth.speed.toFixed(2)}×（AI 决定）` : '语速 由 AI 决定'}
-                </span>
-              ) : (
+              <span className="speed-label">语速</span>
+              <div className="seg">
+                {useLlm && (
+                  <button
+                    className={`seg-btn ${speedMode === 'llm' ? 'on' : ''}`}
+                    onClick={() => setSpeedMode('llm')}
+                    title="由大模型在 0.95~1.10 内按内容语境微调"
+                  >AI 决定</button>
+                )}
+                <button
+                  className={`seg-btn ${speedModeEff === 'auto' ? 'on' : ''}`}
+                  onClick={() => setSpeedMode('auto')}
+                  title="按「语音时长 ÷ 语音跨度」自动求速，夹在 0.95~1.10"
+                >自动</button>
+                <button
+                  className={`seg-btn ${speedMode === 'manual' ? 'on' : ''}`}
+                  onClick={() => setSpeedMode('manual')}
+                  title="你拖动滑块指定语速"
+                >手动</button>
+              </div>
+              {speedModeEff === 'manual' ? (
                 <>
-                  <label className="switch">
-                    <input
-                      type="checkbox"
-                      checked={speedAuto}
-                      onChange={(e) => setSpeedAuto(e.target.checked)}
-                    />
-                    <span className="track" />
-                    自动语速
-                  </label>
-                  {/* 自动语速下不出现滑块，只给只读结论，避免“数字自己变”的困惑 */}
-                  {speedAuto ? (
-                    <span className="hint">
-                      {synth ? `语速 1.00 → ${synth.speed.toFixed(2)}×（自动）` : '语速 待计算（自动）'}
-                    </span>
-                  ) : (
-                    <>
-                      <input
-                        type="range" min={0.95} max={1.1} step={0.01}
-                        value={speed}
-                        onChange={(e) => setSpeed(Number(e.target.value))}
-                      />
-                      <span className="mono">{speed.toFixed(2)}×</span>
-                    </>
-                  )}
+                  <input
+                    type="range" min={0.95} max={1.1} step={0.01}
+                    value={speed}
+                    onChange={(e) => setSpeed(Number(e.target.value))}
+                  />
+                  <span className="mono">{speed.toFixed(2)}×</span>
                 </>
+              ) : (
+                <span className="hint">
+                  {synth
+                    ? `1.00 → ${synth.speed.toFixed(2)}×（${speedModeEff === 'llm' ? 'AI 决定' : '自动'}）`
+                    : speedModeEff === 'llm' ? '由 AI 决定' : '待计算'}
+                </span>
               )}
             </div>
             <div className="speed-line">
