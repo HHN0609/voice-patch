@@ -38,6 +38,9 @@ def load_config() -> dict:
     pan["api_key"] = pan.get("api_key") or os.environ.get("PAN_API_KEY", "")
     ds = cfg.setdefault("deepseek", {})
     ds["api_key"] = ds.get("api_key") or os.environ.get("DEEPSEEK_API_KEY", "")
+    # LLM 编排顾问默认复用 DeepSeek Key
+    llm = cfg.setdefault("llm", {})
+    llm["api_key"] = llm.get("api_key") or ds["api_key"]
     cfg["root"] = str(_ROOT)
     data_dir = Path(cfg["storage"]["data_dir"])
     if not data_dir.is_absolute():

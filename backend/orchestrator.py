@@ -6,6 +6,7 @@ from pathlib import Path
 from .audio import fitting
 from .config import CFG
 from .db import execute, new_id, now, query_one
+from .llm import decider as llm_decider
 from .media import ffmpeg_ops as ff
 from .providers import registry
 from .text.normalize import normalize_text
@@ -100,7 +101,8 @@ def ref_window(T0: float, T1: float, duration: float) -> tuple[float, float]:
 def synthesize_segment(sid: str, text: str, speed: float | None = None,
                        takes: int | None = None,
                        ref_t0: float | None = None,
-                       ref_t1: float | None = None) -> dict:
+                       ref_t1: float | None = None,
+                       use_llm: bool | None = None) -> dict:
     seg = query_one("SELECT * FROM segments WHERE id=?", (sid,))
     if not seg:
         raise KeyError(f"segment {sid} 不存在")
@@ -148,6 +150,26 @@ def synthesize_segment(sid: str, text: str, speed: float | None = None,
     speed_use = speed if speed is not None else fitting.choose_speed(raw_speech, speech_target, lo, hi)
     speed_use = round(min(max(speed_use, lo), hi), 4)
 
+    # 可选：交给大模型微调语速 / 决定优先占用哪侧静音 / 给出精简建议。
+    # 失败一律回退规则策略，绝不阻断合成。
+    pad_side = "tail"
+    decision = {"source": "rules", "reason": "", "text_simplified": None}
+    if llm_decider.enabled(use_llm):
+        advice = llm_decider.decide(
+            text=text_norm, window=window, speech_target=speech_target,
+            speech_len=raw_speech / speed_use if speed_use > 0 else raw_speech,
+            head_pad=head_pad, tail_pad=tail_pad, raw_speech=raw_speech,
+            rule_speed=speed_use, video_duration=proj["duration"],
+        )
+        if advice is not None:
+            if speed is None and advice.speed is not None:
+                speed_use = advice.speed  # 已由 decider clamp 在硬边界内
+            pad_side = advice.pad_side
+            decision = {"source": "llm", "reason": advice.reason,
+                        "text_simplified": advice.text_simplified}
+        else:
+            decision["reason"] = "AI 决策不可用，已回退规则策略"
+
     fit_list: list[fitting.TakeFit] = []
     out: list[dict] = []
     seg_dir = Path(proj["audio_path"]).parent
@@ -169,7 +191,7 @@ def synthesize_segment(sid: str, text: str, speed: float | None = None,
             ff.atempo(raw_path, speed_use, voiced)
         else:
             shutil.copy(raw_path, voiced)
-        pad = fitting.plan_pads(speech_len, speech_target, head_pad, tail_pad)
+        pad = fitting.plan_pads(speech_len, speech_target, head_pad, tail_pad, side=pad_side)
 
         # 总长恒定对齐 window：头 (head_pad+fade) + 语音 + 尾 (tail_pad+fade)
         final = seg_dir / f"seg_{sid}_take{i + 1}.wav"
@@ -196,7 +218,7 @@ def synthesize_segment(sid: str, text: str, speed: float | None = None,
             (text_norm, "synthesized", sid))
     return {"segment_id": sid, "text_norm": text_norm, "speed": speed_use,
             "window": round(window, 4), "speech": round(speech_target, 4), "takes": out,
-            "voice_source": voice_source,
+            "voice_source": voice_source, "decision": decision,
             "overflow": overflow,
             "delta": best.delta,
             "d_class": bool(raw_speech > speech_target * 1.5)}  # 语音远超目标，按 D 类提示五选一路由

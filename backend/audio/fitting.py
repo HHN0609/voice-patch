@@ -40,21 +40,48 @@ def choose_speed(raw_speech: float, speech_target: float,
 
 
 def plan_pads(speech_len: float, speech_target: float,
-              head_pad: float, tail_pad: float) -> PadPlan:
-    """把语音与目标的差额摊到两端静音：偏长吃静音、偏短多垫静音，都优先尾部。"""
+              head_pad: float, tail_pad: float, side: str = "tail") -> PadPlan:
+    """把语音与目标的差额摊到两端静音：偏长吃静音、偏短多垫静音。
+
+    side 决定优先方向：tail（默认，结束停顿不敏感）/ head（保留尾音收束）/ split（按比例）。
+    """
     head, tail = head_pad, tail_pad
     diff = speech_len - speech_target
     overflow = False
+
     if diff > 0:
-        take = min(tail, diff)
-        tail -= take
-        diff -= take
-        take = min(head, diff)
-        head -= take
-        diff -= take
+        if side == "split" and (head + tail) > 0:
+            ratio = head / (head + tail)
+            take = min(head, diff * ratio)
+            head -= take
+            diff -= take
+            take = min(tail, diff)
+            tail -= take
+            diff -= take
+        else:
+            order = ("head", "tail") if side == "head" else ("tail", "head")
+            for name in order:
+                if diff <= 1e-9:
+                    break
+                if name == "head":
+                    take = min(head, diff)
+                    head -= take
+                else:
+                    take = min(tail, diff)
+                    tail -= take
+                diff -= take
         overflow = diff > 1e-6
     elif diff < 0:
-        tail += -diff
+        pad = -diff
+        if side == "split" and (head + tail) > 0:
+            ratio = head / (head + tail)
+            head += pad * ratio
+            tail += pad * (1 - ratio)
+        elif side == "head":
+            head += pad
+        else:
+            tail += pad
+
     return PadPlan(round(max(head, 0.0), 4), round(max(tail, 0.0), 4), overflow)
 
 

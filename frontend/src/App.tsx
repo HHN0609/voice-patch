@@ -42,6 +42,8 @@ export default function App() {
   const [text, setText] = useState('')
   const [speed, setSpeed] = useState(1.0)
   const [speedAuto, setSpeedAuto] = useState(true)
+  // AI 决策（语速微调 / 静音占用方向 / 精简建议）；不可用时后端自动回退规则
+  const [useLlm, setUseLlm] = useState(false)
   const [synth, setSynth] = useState<SynthResp | null>(null)
   const [selTake, setSelTake] = useState('')
   const [resultVideo, setResultVideo] = useState('')
@@ -255,6 +257,7 @@ export default function App() {
         seg.segment_id, text,
         speedAuto ? null : speed,
         voice,
+        useLlm,
       )
       setSynth(r)
       if (r.speed) setSpeed(r.speed)
@@ -299,6 +302,7 @@ export default function App() {
     setText('')
     setSpeed(1.0)
     setSpeedAuto(true)
+    setUseLlm(false)
     setSynth(null)
     setSelTake('')
     setResultVideo('')
@@ -456,6 +460,14 @@ export default function App() {
             />
             <span className="mono">{speed.toFixed(2)}×</span>
             <span className="hint">语音 {seg.speech.toFixed(2)}s · 窗口 {seg.window.toFixed(2)}s</span>
+            <label title="由大模型决定语速微调、优先占用哪侧静音；不可用时自动回退内置规则">
+              <input
+                type="checkbox"
+                checked={useLlm}
+                onChange={(e) => setUseLlm(e.target.checked)}
+              />
+              AI 决策
+            </label>
             <button className="btn primary" disabled={!!busy} onClick={doSynthesize}>
               生成候选音频
             </button>
@@ -472,6 +484,15 @@ export default function App() {
               : synth.overflow
                 ? '⚠ 时长有轻微溢出，take 已做适配，请试听确认'
                 : `✓ 时长匹配良好（偏差 ${synth.delta.toFixed(2)}s）· 参考音来源：${synth.voice_source === 'user' ? '你选中的区间' : '口误区间'}`}
+          </div>
+          <div className="hint" style={{ marginBottom: 8 }}>
+            决策来源：{synth.decision?.source === 'llm' ? 'AI 建议' : '内置规则'}
+            {synth.decision?.reason ? ` · ${synth.decision.reason}` : ''}
+            {synth.decision?.text_simplified && (
+              <div style={{ marginTop: 4 }}>
+                AI 建议精简为：<b>{synth.decision.text_simplified}</b>
+              </div>
+            )}
           </div>
           <div className="takes">
             {synth.takes.map((t) => (

@@ -15,6 +15,7 @@
 - **音色一致**：不框参考音时默认直接用口误区间那段原声（不足 2.5s 自动向两侧补足）；多人视频可手动框选“该说话人”的一段话，强制按此音色克隆。
 - **无缝渲染**：头/新音频/尾等功率交叉淡化 → 补底噪垫床 → EBU R128 响度归一 → 仅替换音轨（视频流 copy）。
 - **零 Key 可跑**：`mock` provider 可在没有任何云服务密钥时跑通全链路，便于联调。
+- **AI 决策（可选）**：打开「AI 决策」开关后，语速微调、优先占用哪侧静音、溢出时的精简改写建议交给 DeepSeek 判断；所有输出都有硬边界（越界夹紧、类型不符丢弃），无 Key / 超时 / 坏 JSON 一律静默回退内置规则，不影响出片。
 - **Web UI**：React + wavesurfer.js，支持视频画面与波形联动、take 试听、成片预览与下载。
 
 ## 架构
@@ -108,6 +109,9 @@ npm run build    # 产物输出到 ../web ，随后刷新 /ui/ 即可看到最�
 | `render.tolerance_abs` / `tolerance_rel` | 时长偏差容忍（取宽） |
 | `render.crossfade_ms` / `noise_bed_gain` / `target_lufs` / `true_peak` | 拼接与响度参数 |
 | `storage.data_dir` | 数据根目录，默认 `data` |
+| `llm.enabled` | 是否启用 AI 决策（前端「AI 决策」开关可临时覆盖），默认 `false` |
+| `llm.model` / `base_url` / `timeout_s` | DeepSeek 对话模型与超时；Key 复用 `DEEPSEEK_API_KEY` |
+| `llm.speed_clamp` | AI 建议语速的硬边界，默认 `[0.95, 1.10]` |
 
 > 修改 `config.yaml` 或 `.env` 后必须**重启 uvicorn** 才生效（provider 与配置在进程内缓存）。
 

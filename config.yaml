@@ -32,3 +32,12 @@ render:
 
 storage:
   data_dir: data
+
+# 可选：把语速微调 / 静音占用方向 / 溢出精简建议交给大模型
+# 任何异常都会静默回退到规则引擎；输出字段有硬边界，越界即夹紧
+llm:
+  enabled: false                          # 前端开关可临时覆盖；需要 DEEPSEEK_API_KEY
+  base_url: https://api.deepseek.com
+  model: deepseek-chat
+  timeout_s: 8
+  speed_clamp: [0.95, 1.10]               # LLM 建议的语速硬边界

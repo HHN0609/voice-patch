@@ -45,11 +45,18 @@ export interface SynthResp {
   text_norm: string
   speed: number
   window: number
+  speech: number
   takes: Take[]
   voice_source: 'user' | 'mispeak'
   overflow: boolean
   delta: number
   d_class: boolean
+  /** 编排决策来源：llm = AI 建议，rules = 内置规则（AI 不可用时自动回退） */
+  decision: {
+    source: 'llm' | 'rules'
+    reason: string
+    text_simplified: string | null
+  }
 }
 
 export interface RenderResp {
@@ -94,6 +101,7 @@ export const api = {
     text: string,
     speed: number | null,
     ref: { t0: number; t1: number } | null,
+    useLlm = false,
   ) {
     return req<SynthResp>(`/api/segments/${sid}/synthesize`, {
       method: 'POST',
@@ -103,6 +111,7 @@ export const api = {
         speed,
         ref_t0: ref?.t0 ?? null,
         ref_t1: ref?.t1 ?? null,
+        use_llm: useLlm,
       }),
     })
   },

@@ -27,6 +27,7 @@ uvicorn backend.main:app --host 127.0.0.1 --port 8765 --reload
 | `providers/` | ASR / TTS 抽象与实现，见下节 |
 | `media/ffmpeg_ops.py` | ffmpeg/ffprobe 纯函数封装：探测、抽轨、裁切、静音检测、变速、交叉淡化、底噪混合、响度测量与应用、换轨封装 |
 | `audio/fitting.py` | 时长适配：`choose_speed` 选语速、`plan_pads` 用选区静音吸收差额、`pick_best` 择优 |
+| `llm/decider.py` | 可选 AI 编排顾问：建议语速微调 / 静音占用方向 / 精简文本；字段有硬边界，异常静默回退规则 |
 | `text/normalize.py` | 文本规整：数字 / 百分比 / 年份 → 中文读法；`estimate_duration_zh` 粗估时长 |
 | `pan_upload.py` | `pan.ezv.cc` 分片上传 + 审核轮询 + 匿名 URL 验证 + 回收，供标准版 ASR 拉取音频 |
 
