@@ -35,7 +35,6 @@ export default function App() {
   const previewRef = useRef<HTMLAudioElement | null>(null)
   const previewingRef = useRef(false)
   const previewRafRef = useRef(0)
-  const previewTimerRef = useRef<number | undefined>(undefined)
   const [previewing, setPreviewing] = useState<RegionMode | ''>('')
 
   // 转写 / 合成 / 渲染
@@ -77,8 +76,6 @@ export default function App() {
     previewingRef.current = false
     cancelAnimationFrame(previewRafRef.current)
     previewRafRef.current = 0
-    window.clearTimeout(previewTimerRef.current)
-    previewTimerRef.current = undefined
     setPreviewing('')
   }, [])
 
@@ -131,26 +128,26 @@ export default function App() {
       a.src = project.audio_url
       a.currentTime = sel.t0
     }
+    // 起播时刻只用已知量计算，不依赖赋值后回读 currentTime（seek 异步，回读可能拿到旧值）
     // 暂停后继续：若仍停在选区内则从当前位置续播，否则回到选区开头
     const resume = a.currentTime > sel.t0 + 0.01 && a.currentTime < sel.t1 - 0.01
-    if (!resume) a.currentTime = sel.t0
-    ws?.setTime(a.currentTime) // 光标/画面定位到播放起点
+    const startAt = resume ? a.currentTime : sel.t0
+    if (!resume) a.currentTime = startAt
+    ws?.setTime(startAt) // 光标/画面定位到播放起点
     a.ontimeupdate = () => {
-      if (a && a.currentTime >= sel.t1) stopPreview()
+      // 兜底；seek 未生效时 currentTime 是旧值，靠 seeking 标志防误停
+      if (a && !a.seeking && a.currentTime >= sel.t1) stopPreview()
     }
-    a.play().catch(() => stopPreview())
-    setPreviewing(kind)
-    // 到选区终点精确停止（timeupdate 粒度约 250ms，会拖出选区外）
-    window.clearTimeout(previewTimerRef.current)
-    previewTimerRef.current = window.setTimeout(
-      () => stopPreview(), Math.max(0, (sel.t1 - a.currentTime) * 1000) + 30,
-    )
-
-    // 进度条 / 波形光标跟随试听位置
+    // 等 seek 生效再播：避免 seek 完成前从旧位置出声、或旧位置的 timeupdate 误触停止
+    // rAF 跟随循环必须等真正起播后再启动——提前启动会因 paused 在第一帧退出
     const tick = () => {
       const el = previewRef.current
       if (!el || el.paused) {
         previewRafRef.current = 0
+        return
+      }
+      if (el.currentTime >= sel.t1) {
+        stopPreview()
         return
       }
       setCursor(el.currentTime)
@@ -158,14 +155,22 @@ export default function App() {
       wsRef.current?.setTime(el.currentTime)
       previewRafRef.current = requestAnimationFrame(tick)
     }
-    cancelAnimationFrame(previewRafRef.current)
-    previewRafRef.current = requestAnimationFrame(tick)
+    const doPlay = () => {
+      a!.play().catch(() => stopPreview())
+      cancelAnimationFrame(previewRafRef.current)
+      previewRafRef.current = requestAnimationFrame(tick)
+    }
+    if (a.seeking) {
+      a.addEventListener('seeked', doPlay, { once: true })
+    } else {
+      doPlay()
+    }
+    setPreviewing(kind)
   }
 
   // 卸载时停掉试听与跟随
   useEffect(() => () => {
     previewRef.current?.pause()
-    window.clearTimeout(previewTimerRef.current)
     cancelAnimationFrame(previewRafRef.current)
   }, [])
 

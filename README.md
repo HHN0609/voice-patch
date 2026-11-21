@@ -183,6 +183,20 @@ python scripts/test_volc_asr.py
 python scripts/http_test.py
 ```
 
+### 前端自动化测试（改前端代码后必跑）
+
+```powershell
+cd frontend
+npm run check    # = tsc 类型检查 + vite build + 单测 + E2E，一键自检
+npm run test     # 仅单元测试（Vitest + RTL，~4s）
+npm run e2e      # 仅 E2E（Playwright 真 Chromium，~20s，自动拉起/复用后端）
+```
+
+- **单元测试**（[frontend/src/App.test.tsx](frontend/src/App.test.tsx)）：mock Audio/波形/网络，确定性复现竞态时序——试听起播位置、暂停续播、选区终点精确停、seek 期间旧位置 timeupdate 不误停、主播放互斥、重新上传全状态重置。
+- **E2E**（[frontend/e2e/preview.spec.ts](frontend/e2e/preview.spec.ts)）：真实输入驱动完整链路——拖拽框选、试听自动停止、播完重点试听、暂停续播、重新上传重置、进度条游标与波形播放头对齐。
+- E2E 首次运行需 `npx playwright install chromium` 下载浏览器；测试用视频取自 `test/350679646.mp4`。
+- **约定：agent 修改前端代码后，必须跑 `npm run check` 全绿才算完成。**
+
 ## 说明与限制
 
 - 一步只替换一个选区；多口误建议逐个渲染。

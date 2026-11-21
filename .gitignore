@@ -20,6 +20,11 @@ lerna-debug.log*
 # 前端构建产物（vite outDir=../web，由 npm run build 生成）
 web/
 
+# 测试产物（Playwright / Vitest）
+frontend/test-results/
+frontend/playwright-report/
+frontend/.vitest-cache/
+
 # 运行数据（上传的视频、中间音频、SQLite、成片）
 data/
 
