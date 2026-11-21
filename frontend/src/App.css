@@ -111,8 +111,54 @@ header h1 { font-size: 20px; margin: 0; }
   font-size: 15px; resize: vertical;
 }
 
-.speed-row { display: flex; align-items: center; gap: 12px; margin-top: 12px; flex-wrap: wrap; }
+/* AI 决策在上、语速在下，两行纵向排列 */
+.speed-stack { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.speed-line { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .mono { font-variant-numeric: tabular-nums; }
+
+/* 开关：语速 / 自动语速 / AI 决策 统一用同一形态 */
+.switch {
+  position: relative; display: inline-flex; align-items: center;
+  gap: 8px; cursor: pointer; color: var(--dim); font-size: 13px;
+  user-select: none;
+}
+.switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+.switch .track {
+  position: relative; flex: none;
+  width: 34px; height: 18px; border-radius: 999px;
+  background: #2a3140; border: 1px solid var(--line);
+  transition: background 0.15s, border-color 0.15s;
+}
+.switch .track::after {
+  content: ''; position: absolute; top: 1px; left: 1px;
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--dim);
+  transition: transform 0.15s, background 0.15s;
+}
+.switch input:checked + .track {
+  background: rgba(79, 140, 255, 0.4); border-color: var(--blue);
+}
+.switch input:checked + .track::after {
+  transform: translateX(16px); background: #fff;
+}
+.switch:hover .track { border-color: var(--blue); }
+.switch input:focus-visible + .track {
+  outline: 2px solid var(--blue); outline-offset: 2px;
+}
+
+/* 语音 / 窗口 两个长度术语的明文解释 */
+.seg-metrics {
+  display: flex; flex-direction: column; gap: 4px;
+  margin-top: 12px; padding-top: 10px;
+  border-top: 1px dashed var(--line);
+  color: var(--dim); font-size: 12px;
+}
+.seg-metrics span { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.seg-metrics b {
+  color: var(--text); font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.seg-metrics em { font-style: normal; }
 
 .takes { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 12px; }
 .take {

@@ -42,8 +42,9 @@ export default function App() {
   const [text, setText] = useState('')
   const [speed, setSpeed] = useState(1.0)
   const [speedAuto, setSpeedAuto] = useState(true)
-  // AI 决策（语速微调 / 静音占用方向 / 精简建议）；不可用时后端自动回退规则
+  // AI 决策（静音分配 / 文本精简）；开启后默认连语速一起接管，可按需夺回
   const [useLlm, setUseLlm] = useState(false)
+  const [llmOwnsSpeed, setLlmOwnsSpeed] = useState(true)
   const [synth, setSynth] = useState<SynthResp | null>(null)
   const [selTake, setSelTake] = useState('')
   const [resultVideo, setResultVideo] = useState('')
@@ -253,14 +254,17 @@ export default function App() {
     setError('')
     setBusy('克隆音色并合成候选（3 次 TTS，约 1~2 分钟）…')
     try {
+      // AI 接管语速时传 null；用户夺回后按「自动/手动」照常传
+      const speedArg = useLlm && llmOwnsSpeed ? null : (speedAuto ? null : speed)
       const r = await api.synthesize(
         seg.segment_id, text,
-        speedAuto ? null : speed,
+        speedArg,
         voice,
         useLlm,
+        useLlm && !llmOwnsSpeed,
       )
       setSynth(r)
-      if (r.speed) setSpeed(r.speed)
+      // 不回写 speed：手动值由用户掌握，自动/AI 的结果统一从 synth.speed 展示
     } catch (e) {
       onError(e)
       return
@@ -303,6 +307,7 @@ export default function App() {
     setSpeed(1.0)
     setSpeedAuto(true)
     setUseLlm(false)
+    setLlmOwnsSpeed(true)
     setSynth(null)
     setSelTake('')
     setResultVideo('')
@@ -321,7 +326,7 @@ export default function App() {
   return (
     <div className="app">
       <header>
-        <h1>voice-patch · 口误修复</h1>
+        <h1>Voice patch · 口误修复</h1>
         <div className="proj-name">{project.name}</div>
         <button className="btn ghost reupload" onClick={resetToUpload}>重新上传</button>
       </header>
@@ -443,34 +448,84 @@ export default function App() {
             onChange={(e) => setText(e.target.value)}
             rows={2}
           />
-          <div className="speed-row">
-            <label>
-              <input
-                type="checkbox"
-                checked={speedAuto}
-                onChange={(e) => setSpeedAuto(e.target.checked)}
-              />
-              自动语速
-            </label>
-            <input
-              type="range" min={0.95} max={1.1} step={0.01}
-              value={speed}
-              disabled={speedAuto}
-              onChange={(e) => setSpeed(Number(e.target.value))}
-            />
-            <span className="mono">{speed.toFixed(2)}×</span>
-            <span className="hint">语音 {seg.speech.toFixed(2)}s · 窗口 {seg.window.toFixed(2)}s</span>
-            <label title="由大模型决定语速微调、优先占用哪侧静音；不可用时自动回退内置规则">
-              <input
-                type="checkbox"
-                checked={useLlm}
-                onChange={(e) => setUseLlm(e.target.checked)}
-              />
-              AI 决策
-            </label>
-            <button className="btn primary" disabled={!!busy} onClick={doSynthesize}>
-              生成候选音频
-            </button>
+          <div className="speed-stack">
+            <div className="speed-line">
+              <label
+                className="switch"
+                title="由大模型决定语速（可单独收回）、优先占用哪侧静音、给出文本精简建议；不可用时自动回退内置规则"
+              >
+                <input
+                  type="checkbox"
+                  checked={useLlm}
+                  onChange={(e) => setUseLlm(e.target.checked)}
+                />
+                <span className="track" />
+                AI 决策
+              </label>
+              {useLlm && <span className="hint">语速 · 静音分配 · 文本精简</span>}
+            </div>
+            <div className="speed-line">
+              {/* AI 参与时才需要选语速归属：开 = AI 接管，关 = 自己控制 */}
+              {useLlm && (
+                <label className="switch" title="开：语速交给 AI 决定；关：语速改由你控制（AI 仍管静音与文本）">
+                  <input
+                    type="checkbox"
+                    checked={llmOwnsSpeed}
+                    onChange={(e) => setLlmOwnsSpeed(e.target.checked)}
+                  />
+                  <span className="track" />
+                  语速
+                </label>
+              )}
+              {useLlm && llmOwnsSpeed ? (
+                <span className="hint">
+                  {synth ? `语速 1.00 → ${synth.speed.toFixed(2)}×（AI 决定）` : '语速 由 AI 决定'}
+                </span>
+              ) : (
+                <>
+                  <label className="switch">
+                    <input
+                      type="checkbox"
+                      checked={speedAuto}
+                      onChange={(e) => setSpeedAuto(e.target.checked)}
+                    />
+                    <span className="track" />
+                    自动语速
+                  </label>
+                  {/* 自动语速下不出现滑块，只给只读结论，避免“数字自己变”的困惑 */}
+                  {speedAuto ? (
+                    <span className="hint">
+                      {synth ? `语速 1.00 → ${synth.speed.toFixed(2)}×（自动）` : '语速 待计算（自动）'}
+                    </span>
+                  ) : (
+                    <>
+                      <input
+                        type="range" min={0.95} max={1.1} step={0.01}
+                        value={speed}
+                        onChange={(e) => setSpeed(Number(e.target.value))}
+                      />
+                      <span className="mono">{speed.toFixed(2)}×</span>
+                    </>
+                  )}
+                </>
+              )}
+            </div>
+            <div className="speed-line">
+              <button className="btn primary" disabled={!!busy} onClick={doSynthesize}>
+                生成候选音频
+              </button>
+            </div>
+          </div>
+          {/* 两个核心长度术语的明文解释：只在「识别此区间」后才有值 */}
+          <div className="seg-metrics">
+            <span>
+              <b>语音 {seg.speech.toFixed(2)}s</b>
+              <em>选区里真正有人声的时长 —— 新合成的语音按这个长度来做</em>
+            </span>
+            <span>
+              <b>窗口 {seg.window.toFixed(2)}s</b>
+              <em>你框选的总时长 —— 这一段会被整段替换掉（含首尾静音）</em>
+            </span>
           </div>
         </section>
       )}
@@ -612,7 +667,7 @@ function Upload({ onUpload, busy, error }: {
   const [drag, setDrag] = useState(false)
   return (
     <div className="app center">
-      <h1>voice-patch · 口误修复</h1>
+      <h1>Voice patch · 口误修复</h1>
       <p className="hint">上传含口误的视频，框选区间 → 改字 → 克隆音色重说 → 无缝拼回视频。</p>
       <label
         className={`drop ${drag ? 'over' : ''}`}

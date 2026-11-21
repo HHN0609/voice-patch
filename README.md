@@ -15,7 +15,7 @@
 - **音色一致**：不框参考音时默认直接用口误区间那段原声（不足 2.5s 自动向两侧补足）；多人视频可手动框选“该说话人”的一段话，强制按此音色克隆。
 - **无缝渲染**：头/新音频/尾等功率交叉淡化 → 补底噪垫床 → EBU R128 响度归一 → 仅替换音轨（视频流 copy）。
 - **零 Key 可跑**：`mock` provider 可在没有任何云服务密钥时跑通全链路，便于联调。
-- **AI 决策（可选）**：打开「AI 决策」开关后，语速微调、优先占用哪侧静音、溢出时的精简改写建议交给 DeepSeek 判断；所有输出都有硬边界（越界夹紧、类型不符丢弃），无 Key / 超时 / 坏 JSON 一律静默回退内置规则，不影响出片。
+- **AI 决策（可选）**：打开「AI 决策」后，语速、优先占用哪侧静音、溢出时的精简改写建议交给 DeepSeek；语速可按「改由我控制」单独夺回（保留 AI 的静音与文本决策）。所有输出都有硬边界（越界夹紧、类型不符丢弃），无 Key / 超时 / 坏 JSON 一律静默回退内置规则，不影响出片。
 - **Web UI**：React + wavesurfer.js，支持视频画面与波形联动、take 试听、成片预览与下载。
 
 ## 架构
@@ -140,7 +140,7 @@ npm run build    # 产物输出到 ../web ，随后刷新 /ui/ 即可看到最�
 | `GET` | `/api/projects/{pid}` | 项目详情 |
 | `GET` | `/api/projects/{pid}/audio.wav` | 项目音轨 |
 | `POST` | `/api/projects/{pid}/transcribe` | `{t0,t1}` 转写并返回字级时间戳 |
-| `POST` | `/api/segments/{sid}/synthesize` | `{text,speed?,takes?,ref_t0?,ref_t1?}` 合成候选 |
+| `POST` | `/api/segments/{sid}/synthesize` | `{text,speed?,takes?,ref_t0?,ref_t1?,use_llm?,llm_speed_locked?}` 合成候选 |
 | `POST` | `/api/segments/{sid}/render` | `{take_id}` 拼接、补底噪、响度归一、换轨导出 |
 
 静态资源：`/ui/*` 前端页面，`/data/*` 项目视频/音频。

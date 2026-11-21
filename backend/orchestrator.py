@@ -102,7 +102,8 @@ def synthesize_segment(sid: str, text: str, speed: float | None = None,
                        takes: int | None = None,
                        ref_t0: float | None = None,
                        ref_t1: float | None = None,
-                       use_llm: bool | None = None) -> dict:
+                       use_llm: bool | None = None,
+                       llm_speed_locked: bool = False) -> dict:
     seg = query_one("SELECT * FROM segments WHERE id=?", (sid,))
     if not seg:
         raise KeyError(f"segment {sid} 不存在")
@@ -176,7 +177,7 @@ def synthesize_segment(sid: str, text: str, speed: float | None = None,
             pad_side = advice.pad_side
             llm_speed_raw = advice.speed_raw
             llm_speed_clamped = advice.speed_clamped
-            if speed is None and advice.speed is not None:
+            if speed is None and advice.speed is not None and not llm_speed_locked:
                 speed_use = advice.speed  # 已由 decider clamp 在硬边界内
                 speed_src = "llm"
         else:

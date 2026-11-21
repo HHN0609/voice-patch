@@ -124,6 +124,7 @@ export const api = {
     speed: number | null,
     ref: { t0: number; t1: number } | null,
     useLlm = false,
+    llmSpeedLocked = false,
   ) {
     return req<SynthResp>(`/api/segments/${sid}/synthesize`, {
       method: 'POST',
@@ -134,6 +135,7 @@ export const api = {
         ref_t0: ref?.t0 ?? null,
         ref_t1: ref?.t1 ?? null,
         use_llm: useLlm,
+        llm_speed_locked: llmSpeedLocked,
       }),
     })
   },

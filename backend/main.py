@@ -74,6 +74,8 @@ class SynthesizeReq(BaseModel):
     ref_t0: float | None = None         # 用户选中的参考音色区间（同说话人）
     ref_t1: float | None = None
     use_llm: bool | None = None         # True/False 覆盖配置；None 跟随 config
+    # 用户“夺回语速控制权”时置 True：AI 仍参与静音分配与文本精简，但不改语速
+    llm_speed_locked: bool = False
 
 
 @app.post("/api/segments/{sid}/synthesize")
@@ -82,7 +84,8 @@ def synthesize(sid: str, req: SynthesizeReq) -> dict:
         raise HTTPException(400, "文本为空")
     try:
         return orc.synthesize_segment(sid, req.text, req.speed, req.takes,
-                                      req.ref_t0, req.ref_t1, req.use_llm)
+                                      req.ref_t0, req.ref_t1, req.use_llm,
+                                      req.llm_speed_locked)
     except ValueError as e:
         raise HTTPException(400, str(e))
     except Exception as e:
