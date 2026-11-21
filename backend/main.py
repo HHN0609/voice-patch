@@ -44,7 +44,8 @@ async def upload(file: UploadFile = File(...), name: str = "") -> dict:
 
 @app.get("/api/projects")
 def list_projects() -> list[dict]:
-    return query_all("SELECT * FROM projects ORDER BY created_at DESC")
+    # 复用 get_project：把 has_video 统一成布尔、并补上 video_url/audio_url
+    return [orc.get_project(p["id"]) for p in query_all("SELECT * FROM projects ORDER BY created_at DESC")]
 
 
 @app.get("/api/projects/{pid}/audio.wav")

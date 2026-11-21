@@ -15,7 +15,7 @@ def int_to_cn(n: int) -> str:
 
     def group_to_cn(g: int) -> str:  # 0~9999
         s, zero_pending = "", False
-        for pos in (2, 1, 0):  # 百十个
+        for pos in (3, 2, 1, 0):  # 千百十个
             d = (g // 10 ** pos) % 10
             if d == 0:
                 zero_pending = s != ""
@@ -53,7 +53,8 @@ def _num_to_cn(m: re.Match) -> str:
 
 
 def _year_to_cn(m: re.Match) -> str:
-    return "".join(_DIGITS[int(c)] for c in m.group(1)) + "年"
+    # 正则用零宽断言 (?=年)，"年" 本身不会被消耗，这里不能再补
+    return "".join(_DIGITS[int(c)] for c in m.group(1))
 
 
 def normalize_text(text: str) -> str:

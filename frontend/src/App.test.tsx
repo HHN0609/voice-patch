@@ -1,14 +1,50 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
+import { api, type SynthResp } from './api'
 import { FakeAudio } from './test/setup'
 
-// mock 网络层：上传即返回固定项目
+// mock 网络层：上传 / 转写 / 合成 / 渲染全部走假数据，测试不触网
+const M = vi.hoisted(() => {
+  const project = {
+    id: 'p1', name: 'test.mp4', duration: 10, has_video: true,
+    video_url: '/data/p1/source.mp4', audio_url: '/data/p1/audio.wav',
+  }
+  const plan = {
+    source: 'rules',
+    reason: '',
+    text_simplified: null,
+    speed: { rules: 1.10, llm_raw: null, applied: 1.10, clamped: false, source: 'rules' },
+    pad_side: { rules: 'tail', llm_raw: null, applied: 'tail', source: 'rules' },
+    speech: { target: 1.77, body: 1.93, delta: 0.16 },
+    silence: { head_before: 0.16, head_after: 0.09, tail_before: 0.09, tail_after: 0 },
+  }
+  return {
+    project,
+    transcribe: {
+      segment_id: 's1', t0: 1, t1: 3, T0: 1, T1: 3, window: 2.0, speech: 1.77,
+      words: [], text_raw: '国产新型舰载机', text_norm: '国产新型舰载机',
+    },
+    plan,
+    synth: {
+      segment_id: 's1', text_norm: '国产新型舰载机', speed: 1.10,
+      window: 2.0, speech: 1.77,
+      takes: [{
+        take_id: 't1', take_no: 1, final_dur: 2.0, delta: 0, stretch: 1,
+        status: 'ok', speed: 1.1, seed: 0, wav: '/t1.wav',
+      }],
+      voice_source: 'mispeak', overflow: false, delta: 0, d_class: false, plan,
+    },
+  }
+})
+
 vi.mock('./api', () => ({
   api: {
-    uploadVideo: vi.fn(async () => ({
-      id: 'p1', name: 'test', duration: 10,
-      video_url: '/data/p1/source.mp4', audio_url: '/data/p1/audio.wav',
+    uploadVideo: vi.fn(async () => M.project),
+    transcribe: vi.fn(async () => M.transcribe),
+    synthesize: vi.fn(async () => M.synth),
+    render: vi.fn(async () => ({
+      video: '/v.mp4', original_audio: '', final_dur: 2, delta: 0,
     })),
   },
 }))
@@ -159,5 +195,123 @@ describe('重新上传状态重置', () => {
     expect(screen.getByText(/口误区间：未选/)).toBeTruthy()
     expect(screen.getByText(/参考音色：未选/)).toBeTruthy()
     expect(screen.getByText('重新上传')).toBeTruthy()
+  })
+})
+
+// ---------------------------------------------------------------- 语速三态
+const segBtn = (name: string) => screen.getByRole('button', { name })
+const speedRange = () => document.querySelector('.speed-line input[type=range]')
+
+/** 走到「② 修改文本」：上传 → 就绪 → 框选 → 识别 */
+async function enterTextStage() {
+  await enterWorkStage()
+  fireEvent.click(screen.getByText('识别此区间'))
+  await screen.findByText('② 修改文本')
+}
+
+describe('语速三态', () => {
+  it('默认是「自动」，未开 AI 时不出现「AI 决定」', async () => {
+    await enterTextStage()
+    expect(segBtn('自动').className).toContain('on')
+    expect(segBtn('手动').className).not.toContain('on')
+    expect(screen.queryByRole('button', { name: 'AI 决定' })).toBeNull()
+    // 自动态只给只读结论，不出滑块
+    expect(speedRange()).toBeNull()
+  })
+
+  it('打开 AI 决策后语速默认切到「AI 决定」', async () => {
+    await enterTextStage()
+    fireEvent.click(screen.getByLabelText('AI 决策'))
+    expect(segBtn('AI 决定').className).toContain('on')
+    expect(segBtn('自动').className).not.toContain('on')
+  })
+
+  it('关闭 AI 决策后「AI 决定」回落到「自动」', async () => {
+    await enterTextStage()
+    const sw = screen.getByLabelText('AI 决策')
+    fireEvent.click(sw) // 开
+    fireEvent.click(sw) // 关
+    expect(screen.queryByRole('button', { name: 'AI 决定' })).toBeNull()
+    expect(segBtn('自动').className).toContain('on')
+  })
+
+  it('手动态出现滑块，切回自动后隐藏', async () => {
+    await enterTextStage()
+    fireEvent.click(segBtn('手动'))
+    expect(speedRange()).toBeTruthy()
+    fireEvent.click(segBtn('自动'))
+    expect(speedRange()).toBeNull()
+  })
+
+  it('自动态先显示待计算，生成后给出语速与来源', async () => {
+    await enterTextStage()
+    expect(screen.getByText('待计算')).toBeTruthy()
+    fireEvent.click(screen.getByText('生成候选音频'))
+    await screen.findByText('编排账本')
+    expect(screen.getByText(/1\.00 → 1\.10×（自动）/)).toBeTruthy()
+  })
+})
+
+// ---------------------------------------------------------------- 编排账本
+async function synthesizeOnce() {
+  await enterTextStage()
+  fireEvent.click(screen.getByText('生成候选音频'))
+  await screen.findByText('编排账本')
+  return document.querySelector('.plan')!.textContent ?? ''
+}
+
+describe('编排账本', () => {
+  it('规则模式展示语音与静音的实际变化', async () => {
+    const text = await synthesizeOnce()
+    expect(text).toContain('全部由规则计算')
+    expect(text).toContain('实际 1.93s / 目标 1.77s')
+    expect(text).toContain('超出 0.16s')
+    expect(text).toContain('尾部静音')
+    expect(text).toContain('让出 0.09s 给语音')
+  })
+
+  it('AI 建议越界时明示被硬边界夹紧', async () => {
+    vi.mocked(api.synthesize).mockResolvedValueOnce({
+      ...M.synth,
+      plan: {
+        ...M.plan,
+        source: 'llm',
+        speed: { rules: 1.10, llm_raw: 1.25, applied: 1.10, clamped: true, source: 'llm' },
+      },
+    } as unknown as SynthResp)
+    const text = await synthesizeOnce()
+    expect(text).toContain('AI 已参与')
+    expect(text).toContain('AI 建议 1.25×，已收敛到硬边界 1.10×')
+    expect(text).toContain('边界生效')
+  })
+
+  it('AI 给出精简建议时可一键采用', async () => {
+    vi.mocked(api.synthesize).mockResolvedValueOnce({
+      ...M.synth,
+      plan: { ...M.plan, source: 'llm', text_simplified: '国产舰载机' },
+    } as unknown as SynthResp)
+    await synthesizeOnce()
+    expect(screen.getByText(/AI 建议精简为/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '采用' }))
+    expect((document.querySelector('textarea') as HTMLTextAreaElement).value).toBe('国产舰载机')
+  })
+})
+
+// ---------------------------------------------------------------- 纯音频项目
+describe('纯音频项目', () => {
+  it('不渲染视频画面，标题显示带后缀的文件名', async () => {
+    vi.mocked(api.uploadVideo).mockResolvedValueOnce({ ...M.project, has_video: false })
+    render(<App />)
+    const input = document.querySelector('input[type=file]') as HTMLInputElement
+    fireEvent.change(input, { target: { files: [new File(['x'], 'a.mp3', { type: 'audio/mpeg' })] } })
+
+    await screen.findByText('① 框口误区间')
+    expect(document.querySelector('video')).toBeNull()
+    expect(screen.getByText('test.mp4')).toBeTruthy() // mock 返回的名字带后缀
+  })
+
+  it('视频项目仍渲染视频画面', async () => {
+    await enterWorkStage()
+    expect(document.querySelector('video')).toBeTruthy()
   })
 })

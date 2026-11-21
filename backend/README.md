@@ -23,9 +23,9 @@ uvicorn backend.main:app --host 127.0.0.1 --port 8765 --reload
 | `main.py` | 路由层，只做参数校验与转发；挂载 `/data`（数据目录）与 `/ui`（`web/` 构建产物） |
 | `orchestrator.py` | 编排层，10 步流水线的唯一入口，每步落库、可重入 |
 | `config.py` | 配置加载：系统环境变量 > `.env` > `config.yaml`；补全 `root` 与 `storage.data_dir` 绝对路径 |
-| `db.py` | SQLite（`data/voicepatch.db`），三张表 `projects` / `segments` / `takes` |
+| `db.py` | SQLite（`data/voicepatch.db`），三张表 `projects` / `segments` / `takes`；启动时对老库做增量迁移（如 `projects.has_video`） |
 | `providers/` | ASR / TTS 抽象与实现，见下节 |
-| `media/ffmpeg_ops.py` | ffmpeg/ffprobe 纯函数封装：探测、抽轨、裁切、静音检测、变速、交叉淡化、底噪混合、响度测量与应用、换轨封装 |
+| `media/ffmpeg_ops.py` | ffmpeg/ffprobe 纯函数封装：探测、`has_video` 判定、抽轨、纯音频补黑底占位轨、裁切、静音检测、变速、交叉淡化、底噪混合、响度测量与应用、换轨封装 |
 | `audio/fitting.py` | 时长适配：`choose_speed` 选语速、`plan_pads` 用选区静音吸收差额、`pick_best` 择优 |
 | `llm/decider.py` | 可选 AI 编排顾问：建议语速微调 / 静音占用方向 / 精简文本；字段有硬边界，异常静默回退规则 |
 | `text/normalize.py` | 文本规整：数字 / 百分比 / 年份 → 中文读法；`estimate_duration_zh` 粗估时长 |
@@ -38,13 +38,22 @@ uvicorn backend.main:app --host 127.0.0.1 --port 8765 --reload
 | [1] | `create_project` | 保存上传视频/音频 → 纯音频补黑底占位画面 → `ffprobe` 取时长 → 抽 48kHz 双声道 WAV → 写 `projects` |
 | [2][3] | `trim_words` | 替换区间 = 用户框选区间（不外扩）；ASR 超出选区终点的词会被裁掉 |
 | [4] | `transcribe_segment` | 裁切选区音频 → ASR → 规整文本 → 测语音跨度 → 写 `segments` |
-| [5]~[8] | `synthesize_segment` | 参考音频准备（用户框选，未选则用口误区间、不足 2.5s 向两侧补足）→ 克隆 → 探时长求语速 → 生成 N 个 take → 变速对齐 → 写 `takes` |
+| [5]~[8] | `synthesize_segment` | 参考音频准备（用户框选，未选则用口误区间、不足 2.5s 向两侧补足）→（可选）AI 决策 → 规则求语速 / 占用静音 → 克隆 → 生成 N 个 take → 变速对齐 → 写 `takes` |
 | [9][10] | `render_segment` | 切头/尾 → 等功率交叉淡化拼接 → 底噪垫床 → 响度测量+归一 → 换轨封装 `patch_final.mp4` |
 
-`synthesize_segment` 返回值里两个关键标记：
+语速三态（前端单选，落到两个入参）：
+
+| 前端选择 | `speed` | `llm_speed_locked` | 实际取值 |
+| --- | --- | --- | --- |
+| `AI 决定` | `null` | `false` | AI 建议优先，越界夹紧；AI 不可用则回退规则 |
+| `自动` | `null` | `true` | 只用规则：`clamp(语音时长 ÷ 语音跨度, 0.95, 1.10)` |
+| `手动` | 用户值 | `true` | 用户值优先，AI 建议只记录不生效 |
+
+`synthesize_segment` 返回值里的关键标记：
 
 - `overflow`：最佳 take 仍超出容忍窗口。
 - `d_class`：`Δ > 窗口长度 × 0.5`，说明新文本相对窗口膨胀太多，前端提示精简文本。
+- `plan`（编排账本）：`source`、`reason`、`text_simplified`、`speed{rules,llm_raw,applied,clamped,source}`、`pad_side{rules,llm_raw,applied,source}`、`speech{target,body,delta}`、`silence{head_before,head_after,tail_before,tail_after}`，前端据此逐项展示取舍与来源。
 
 ## Provider 抽象
 
@@ -86,7 +95,26 @@ takes(id, segment_id, take_no, text_norm, provider, voice_id, speed, seed,
 - `t0_sel/t1_sel` 是用户框选，`T0/T1` 是静音扩展后的实际重录窗口。
 - `status`：`transcribed` → `synthesized` → `rendered`；take 的 `status` 为 `ok` / `overflow`。
 - `selected=1` 表示最终出片使用的候选。
-- SQLite 列名不区分大小写，所以框选列加了 `_sel` 后缀。
+- `has_video`：上传源是否自带视频流；`0` 表示纯音频（已补黑底占位轨，导出仍为 mp4）。老库由 `db._migrate` 自动加列，默认 `1`。
+- SQLite 列名不区分大小写，所以框选列加了 `_sel` 后缀。接口层统一把 `has_video` 转成布尔并补 `video_url` / `audio_url`。
+
+## 测试
+
+```powershell
+pip install -r requirements-dev.txt
+.venv\Scripts\python.exe -m pytest tests -q
+```
+
+`tests/` 全部离线：`conftest.py` 把 `storage.data_dir` 切到临时目录并重置 SQLite 连接，provider 用 monkeypatch 替身，媒体用 ffmpeg 现造，不需要任何 Key、也不会写入 `data/`。
+
+| 文件 | 覆盖 |
+| --- | --- |
+| `test_fitting.py` | `choose_speed` 夹紧 / 非法输入、`plan_pads` 的 tail / head / split 与总长守恒、`pick_best` |
+| `test_normalize.py` | 中文数字进位（千 / 万 / 亿）、百分比 / 年份 / 小数、幂等、时长粗估 |
+| `test_decider.py` | LLM 输出解析与越界夹紧、类型不符丢弃、坏 JSON、无 Key / 超时 / 5xx 回退、缓存、`status` 不泄露密钥 |
+| `test_media.py` | `has_video`、`speech_span`、静音裁切 / 补垫、`atempo`、纯音频补占位轨 |
+| `test_orchestrator.py` | 上传保留后缀、纯音频走占位轨并删原文件、`has_video` 落库、老库迁移 |
+| `test_pipeline.py` | 转写窗口 = 选区、短文本不变短、take 与窗口等长、编排账本字段完整 |
 
 ## ffmpeg 依赖
 

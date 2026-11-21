@@ -14,8 +14,10 @@
 - **时长适配**：按选区内实际语音跨度适配（不是按框选总长）→ 语速在 `0.95~1.10` 内先吸收差额 → 仍不够时，语音偏长就占用选区自带的静音、偏短就多垫静音（都优先尾部）→ 一次生成 3 个 take 择优。语速与静音缓冲都用满仍塞不下才提示溢出。
 - **音色一致**：不框参考音时默认直接用口误区间那段原声（不足 2.5s 自动向两侧补足）；多人视频可手动框选“该说话人”的一段话，强制按此音色克隆。
 - **无缝渲染**：头/新音频/尾等功率交叉淡化 → 补底噪垫床 → EBU R128 响度归一 → 仅替换音轨（视频流 copy）。
+- **纯音频也能用**：只传音频时后端自动补一条黑底占位画面，抽轨 / 适配 / 导出仍按视频链路统一处理（界面不显示画面区）。
 - **零 Key 可跑**：`mock` provider 可在没有任何云服务密钥时跑通全链路，便于联调。
 - **AI 决策（可选）**：打开「AI 决策」后，静音占用方向、溢出时的精简改写建议交给 DeepSeek；语速是独立的三态单选（`AI 决定` / `自动` / `手动`），可随时单独切换。所有输出都有硬边界（越界夹紧、类型不符丢弃），无 Key / 超时 / 坏 JSON 一律静默回退内置规则，不影响出片。
+- **编排账本**：本次合成的每项取舍都逐条摊开——语速取值 / 实际语音长度 / 头尾静音变化 / 是否精简文本，并标注来源（你的设置、AI 建议、规则计算）；AI 建议越界会明示「已收敛到硬边界」，精简建议可一键采用。
 - **Web UI**：React + wavesurfer.js，支持视频画面与波形联动、take 试听、成片预览与下载。
 
 ## 架构
@@ -134,7 +136,7 @@ npm run build    # 产物输出到 ../web ，随后刷新 /ui/ 即可看到最�
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | `GET` | `/api/health` | 健康检查 + provider 告警 |
-| `POST` | `/api/projects` | 上传视频（multipart `file`、可选 `name`），抽轨建项目 |
+| `POST` | `/api/projects` | 上传视频/音频（multipart `file`、可选 `name`），抽轨建项目；纯音频自动补占位画面 |
 | `GET` | `/api/projects` | 项目列表 |
 | `GET` | `/api/projects/{pid}` | 项目详情 |
 | `GET` | `/api/projects/{pid}/audio.wav` | 项目音轨 |
@@ -151,20 +153,24 @@ voice-patch/
 ├─ run.py                 # uvicorn 启动入口（127.0.0.1:8765）
 ├─ config.yaml            # provider / 渲染 / 存储配置
 ├─ requirements.txt
+├─ requirements-dev.txt   # 开发/测试依赖（-r requirements.txt + pytest）
 ├─ .env.example           # 密钥模板
 ├─ backend/               # 后端（详见 backend/README.md）
 │  ├─ main.py             # FastAPI 路由与静态挂载
 │  ├─ orchestrator.py     # 10 步流水线编排
 │  ├─ config.py           # 配置加载（env > .env > yaml）
-│  ├─ db.py               # SQLite：projects / segments / takes
+│  ├─ db.py               # SQLite：projects / segments / takes（含老库迁移）
 │  ├─ pan_upload.py       # pan.ezv.cc 中转上传（仅 volc ASR 取公开 URL 时用）
 │  ├─ providers/          # base 协议 + deepseek_asr / volc_asr / volc_tts / mock + registry
-│  ├─ media/ffmpeg_ops.py # ffmpeg 封装
-│  ├─ audio/fitting.py    # 自动语速、take 适配与择优
+│  ├─ media/ffmpeg_ops.py # ffmpeg 封装（探测 / 抽轨 / 静音 / 变速 / 纯音频补占位轨）
+│  ├─ audio/fitting.py    # 自动语速、静音分配、take 适配与择优
+│  ├─ llm/decider.py      # 可选 AI 编排顾问（结构化输出 + 硬边界 + 失败回退）
 │  └─ text/normalize.py   # 数字/百分比/年份中文读法规整
+├─ tests/                 # 后端 pytest 单测（无需 Key / 不触网）
 ├─ frontend/              # 前端源码（详见 frontend/README.md）
 ├─ web/                   # 前端构建产物（FastAPI 挂载到 /ui，已 gitignore）
 ├─ scripts/               # 冒烟 / 云服务 / HTTP 链路测试
+├─ test-files/            # 测试素材（E2E 用的真实视频）
 └─ data/                  # 运行时数据（已 gitignore）
 ```
 
@@ -184,6 +190,22 @@ python scripts/test_volc_asr.py
 python scripts/http_test.py
 ```
 
+### 后端单测（改后端代码后必跑）
+
+```powershell
+pip install -r requirements-dev.txt   # 在 requirements.txt 基础上加 pytest
+.venv\Scripts\python.exe -m pytest tests -q
+```
+
+- 全部用例替身化 / 本地化：不触网、不需要任何 Key，合成媒体由 `ffmpeg` 现造，临时目录会切走 `storage.data_dir`，不会污染 `data/`。
+- 覆盖范围：
+  - `tests/test_fitting.py`：`choose_speed` 边界夹紧、`plan_pads` 三种垫静音策略与总长守恒、`pick_best` 择优。
+  - `tests/test_normalize.py`：中文数字进位（千位 / 万 / 亿）、百分比 / 年份 / 小数读法、幂等性、时长粗估。
+  - `tests/test_decider.py`：LLM 输出解析（越界夹紧、类型不符丢弃、坏 JSON）、无 Key / 超时 / 5xx 静默回退、进程内缓存、`status` 不泄露密钥。
+  - `tests/test_media.py`：`has_video` 判定、`speech_span` 语音跨度、静音裁切 / 补垫、`atempo` 变速、纯音频补占位轨。
+  - `tests/test_orchestrator.py`：上传保留文件名后缀、纯音频走占位轨、`has_video` 落库、老库 7 列 → 8 列自动迁移。
+  - `tests/test_pipeline.py`：转写窗口严格等于选区、短文本不会被缩短成片、take 与窗口等长、编排账本字段完整。
+
 ### 前端自动化测试（改前端代码后必跑）
 
 ```powershell
@@ -193,9 +215,9 @@ npm run test     # 仅单元测试（Vitest + RTL，~4s）
 npm run e2e      # 仅 E2E（Playwright 真 Chromium，~20s，自动拉起/复用后端）
 ```
 
-- **单元测试**（[frontend/src/App.test.tsx](frontend/src/App.test.tsx)）：mock Audio/波形/网络，确定性复现竞态时序——试听起播位置、暂停续播、选区终点精确停、seek 期间旧位置 timeupdate 不误停、主播放互斥、重新上传全状态重置。
-- **E2E**（[frontend/e2e/preview.spec.ts](frontend/e2e/preview.spec.ts)）：真实输入驱动完整链路——拖拽框选、试听自动停止、播完重点试听、暂停续播、重新上传重置、进度条游标与波形播放头对齐。
-- E2E 首次运行需 `npx playwright install chromium` 下载浏览器；测试用视频取自 `test/350679646.mp4`。
+- **单元测试**（[frontend/src/App.test.tsx](frontend/src/App.test.tsx)）：mock Audio/波形/网络，确定性复现竞态时序——试听起播位置、暂停续播、选区终点精确停、seek 期间旧位置 timeupdate 不误停、主播放互斥、重新上传全状态重置；以及语速三态切换（AI 决定 / 自动 / 手动）、编排账本展示与「AI 建议被夹紧」提示、纯音频项目不渲染画面。
+- **E2E**（[frontend/e2e/preview.spec.ts](frontend/e2e/preview.spec.ts)）：真实输入驱动完整链路——拖拽框选、试听自动停止、播完重点试听、暂停续播、重新上传重置、进度条游标与波形播放头对齐、语速三态与编排账本、纯音频上传（内存构造 WAV）。涉及 ASR / TTS 的用例用 `page.route` 打桩，不会产生真实云端调用。
+- E2E 首次运行需 `npx playwright install chromium` 下载浏览器；视频用例取自 `test-files/350679646.mp4`，纯音频用例在内存里现造 WAV。
 - **约定：agent 修改前端代码后，必须跑 `npm run check` 全绿才算完成。**
 
 ## 说明与限制

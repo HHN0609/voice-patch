@@ -1,12 +1,15 @@
 /**
  * E2E：真实输入事件驱动完整试听链路（后端用本地服务，上传/抽轨走真 ffmpeg）。
  * 覆盖：试听自动停止后重点（bug1）、播完才停不早停（bug2）、暂停续播、
- * 重新上传状态重置、进度条游标与波形播放头对齐。
+ * 重新上传状态重置、进度条游标与波形播放头对齐、语速三态与编排账本、纯音频上传。
+ *
+ * 说明：ASR / TTS 会真实调用云端接口（耗时且要 Key），凡涉及这两步的用例
+ * 都用 page.route 打桩，只保留上传/抽轨/探测等本地 ffmpeg 链路走真后端。
  */
 import { expect, test, type Page } from '@playwright/test'
 import path from 'node:path'
 
-const VIDEO = path.resolve(process.cwd(), '../test/350679646.mp4')
+const VIDEO = path.resolve(process.cwd(), '../test-files/350679646.mp4')
 
 /** "m:ss.xx" → 秒 */
 const parse = (s: string) => {
@@ -147,4 +150,132 @@ test('点击波形跳转后，进度条滑块盒与波形容器精确对齐', as
   })
   expect(geo.left).toBeLessThan(1)
   expect(geo.right).toBeLessThan(1)
+})
+
+// ------------------------------------------------------------ 语速三态 / 纯音频
+
+/** 转写与合成的桩响应：字段与后端返回保持一致 */
+const SEG = {
+  segment_id: 'e2e-seg',
+  t0: 4.96, t1: 6.98, T0: 4.96, T1: 6.98, window: 2.02, speech: 1.77,
+  words: [{ text: '国产', start: 0.1, end: 0.4, confidence: 1 }],
+  text_raw: '国产新型舰载机', text_norm: '国产新型舰载机',
+}
+
+const SYNTH = {
+  segment_id: 'e2e-seg', text_norm: '国产新型舰载机', speed: 1.1,
+  window: 2.02, speech: 1.77,
+  takes: [{
+    take_id: 't1', take_no: 1, final_dur: 2.02, delta: 0, stretch: 1,
+    status: 'ok', speed: 1.1, seed: 0, wav: '/data/e2e/t1.wav',
+  }],
+  voice_source: 'mispeak', overflow: false, delta: 0, d_class: false,
+  plan: {
+    source: 'rules', reason: '', text_simplified: null,
+    speed: { rules: 1.1, llm_raw: null, applied: 1.1, clamped: false, source: 'rules' },
+    pad_side: { rules: 'tail', llm_raw: null, applied: 'tail', source: 'rules' },
+    speech: { target: 1.77, body: 1.93, delta: 0.16 },
+    silence: { head_before: 0.16, head_after: 0.09, tail_before: 0.09, tail_after: 0 },
+  },
+}
+
+/** 桩掉 ASR / TTS，避免 E2E 触发真实云端调用 */
+async function mockCloud(page: Page) {
+  await page.route('**/api/projects/*/transcribe', (r) =>
+    r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(SEG) }))
+  await page.route('**/api/segments/*/synthesize', (r) =>
+    r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(SYNTH) }))
+}
+
+/** 内存构造 3s / 16kHz / 单声道 / 16-bit PCM 正弦 WAV，用于纯音频上传 */
+function wav3s(): Buffer {
+  const rate = 16000
+  const n = rate * 3
+  const buf = Buffer.alloc(44 + n * 2)
+  buf.write('RIFF', 0)
+  buf.writeUInt32LE(36 + n * 2, 4)
+  buf.write('WAVE', 8)
+  buf.write('fmt ', 12)
+  buf.writeUInt32LE(16, 16)
+  buf.writeUInt16LE(1, 20)        // PCM
+  buf.writeUInt16LE(1, 22)        // 单声道
+  buf.writeUInt32LE(rate, 24)
+  buf.writeUInt32LE(rate * 2, 28) // byte rate
+  buf.writeUInt16LE(2, 32)        // block align
+  buf.writeUInt16LE(16, 34)       // bits
+  buf.write('data', 36)
+  buf.writeUInt32LE(n * 2, 40)
+  for (let i = 0; i < n; i++) {
+    buf.writeInt16LE(Math.round(Math.sin((2 * Math.PI * 220 * i) / rate) * 12000), 44 + i * 2)
+  }
+  return buf
+}
+
+test('语速三态：AI 决定 / 自动 / 手动 互斥切换，账本标注来源', async ({ page }) => {
+  await mockCloud(page)
+  await upload(page)
+  await dragRegion(page, 0.15, 0.3)
+  await page.getByRole('button', { name: '识别此区间' }).click()
+  await expect(page.getByText('② 修改文本')).toBeVisible()
+
+  // 默认「自动」：没有「AI 决定」选项、不渲染滑块，只显示待计算
+  await expect(page.getByRole('button', { name: '自动' })).toHaveClass(/on/)
+  await expect(page.getByRole('button', { name: 'AI 决定' })).toHaveCount(0)
+  await expect(page.locator('.speed-line input[type=range]')).toHaveCount(0)
+  await expect(page.getByText('待计算')).toBeVisible()
+
+  // 手动 → 出现语速滑块
+  await page.getByRole('button', { name: '手动' }).click()
+  await expect(page.locator('.speed-line input[type=range]')).toBeVisible()
+
+  // 打开 AI 决策 → 语速默认交给 AI（复选框视觉隐藏，点开关本体）
+  await page.locator('.switch').click()
+  await expect(page.locator('.switch input')).toBeChecked()
+  await expect(page.getByRole('button', { name: 'AI 决定' })).toHaveClass(/on/)
+  await expect(page.getByRole('button', { name: '自动' })).not.toHaveClass(/on/)
+  await expect(page.getByText('由 AI 决定')).toBeVisible()
+
+  // 关闭 AI 决策 → 「AI 决定」消失并回落到「自动」
+  await page.locator('.switch').click()
+  await expect(page.locator('.switch input')).not.toBeChecked()
+  await expect(page.getByRole('button', { name: 'AI 决定' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '自动' })).toHaveClass(/on/)
+
+  // 生成候选 → 账本展示规则来源、实际时长与静音变化
+  await page.getByRole('button', { name: '生成候选音频' }).click()
+  const plan = page.locator('.plan')
+  await expect(plan).toContainText('全部由规则计算')
+  await expect(plan).toContainText('1.00 → 1.10×（加快 10%）')
+  await expect(plan).toContainText('实际 1.93s / 目标 1.77s（超出 0.16s）')
+  await expect(plan).toContainText('0.09s → 0.00s（让出 0.09s 给语音）')
+})
+
+test('纯音频上传：不渲染画面，后端补黑底占位轨后全链路可用', async ({ page }) => {
+  await mockCloud(page)
+  await page.goto('/ui/')
+  await page.setInputFiles('input[type=file]', {
+    name: 'voice-only.wav', mimeType: 'audio/wav', buffer: wav3s(),
+  })
+  await page.waitForFunction(() => {
+    const el = document.querySelector<HTMLInputElement>('.scrubber')
+    return !!el && !el.disabled
+  }, undefined, { timeout: 30_000 })
+
+  // 文件名保留后缀；纯音频不渲染 <video> 画面
+  await expect(page.locator('.proj-name')).toHaveText('voice-only.wav')
+  await expect(page.locator('video')).toHaveCount(0)
+  await expect(page.locator('.time')).toContainText('0:03')
+
+  // 后端标记 has_video=false，并生成了占位视频轨（下游导出仍走 mp4）
+  const info = await page.evaluate(async () => {
+    const list = (await (await fetch('/api/projects')).json()) as Array<Record<string, unknown>>
+    return list.find((p) => p.name === 'voice-only.wav')
+  })
+  expect(info?.has_video).toBe(false)
+  expect(String(info?.video_url)).toContain('source.mp4')
+
+  // 纯音频同样能框选 + 识别（ASR 走桩）
+  await dragRegion(page, 0.2, 0.5)
+  await page.getByRole('button', { name: '识别此区间' }).click()
+  await expect(page.getByText('② 修改文本')).toBeVisible()
 })
