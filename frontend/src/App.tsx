@@ -257,6 +257,36 @@ export default function App() {
     setBusy('')
   }
 
+  // 弃当前项目，回到上传页（传错视频时重新选择）
+  const resetToUpload = () => {
+    stopPreview()
+    // 试听 Audio 仍持有旧项目音频，彻底释放，下次试听重建
+    if (previewRef.current) {
+      previewRef.current.src = ''
+      previewRef.current = null
+    }
+    wsRef.current?.pause()
+    videoRef.current?.pause()
+    setPlaying(false)
+    setMode('mispeak')
+    setProject(null)
+    setMispeak(null)
+    setVoice(null)
+    setSeg(null)
+    setText('')
+    setSpeed(1.0)
+    setSpeedAuto(true)
+    setSynth(null)
+    setSelTake('')
+    setResultVideo('')
+    setCursor(0)
+    cursorRef.current = 0
+    setDuration(0)
+    setError('')
+    setBusy('')
+    setStage('upload')
+  }
+
   if (stage === 'upload' || !project) {
     return <Upload onUpload={onUpload} busy={busy} error={error} />
   }
@@ -266,6 +296,7 @@ export default function App() {
       <header>
         <h1>voice-patch · 口误修复</h1>
         <div className="proj-name">{project.name}</div>
+        <button className="btn ghost reupload" onClick={resetToUpload}>重新上传</button>
       </header>
 
       {/* 1. 视频画面 + 波形 */}
