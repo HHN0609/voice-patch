@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type WaveSurfer from 'wavesurfer.js'
-import { api, type ProjectInfo, type SynthResp, type TranscribeResp } from './api'
+import { api, type DecisionPlan, type ProjectInfo, type SynthResp, type TranscribeResp } from './api'
 import Waveform, { type RegionMode, type RegionSel } from './Waveform'
 
 const fmt = (t: number) => {
@@ -485,15 +485,7 @@ export default function App() {
                 ? '⚠ 时长有轻微溢出，take 已做适配，请试听确认'
                 : `✓ 时长匹配良好（偏差 ${synth.delta.toFixed(2)}s）· 参考音来源：${synth.voice_source === 'user' ? '你选中的区间' : '口误区间'}`}
           </div>
-          <div className="hint" style={{ marginBottom: 8 }}>
-            决策来源：{synth.decision?.source === 'llm' ? 'AI 建议' : '内置规则'}
-            {synth.decision?.reason ? ` · ${synth.decision.reason}` : ''}
-            {synth.decision?.text_simplified && (
-              <div style={{ marginTop: 4 }}>
-                AI 建议精简为：<b>{synth.decision.text_simplified}</b>
-              </div>
-            )}
-          </div>
+          <PlanLedger plan={synth.plan} onApply={setText} />
           <div className="takes">
             {synth.takes.map((t) => (
               <div key={t.take_id} className={`take ${selTake === t.take_id ? 'sel' : ''}`}>
@@ -524,6 +516,90 @@ export default function App() {
 
       {busy && <div className="busy">{busy}</div>}
       {error && <div className="err" onClick={() => setError('')}>{error}（点击关闭）</div>}
+    </div>
+  )
+}
+
+const SIDE_NAME: Record<string, string> = { tail: '尾部', head: '头部', split: '两侧' }
+
+/** 编排账本：把本次合成的全部取舍摊开，逐项标注来源，AI 与规则一视同仁 */
+function PlanLedger({ plan, onApply }: { plan: DecisionPlan; onApply(t: string): void }) {
+  if (!plan) return null
+  const sp = plan.speed
+  const sil = plan.silence
+
+  const shift = (before: number, after: number) => {
+    const d = after - before
+    if (Math.abs(d) < 0.005) return '不变'
+    return d < 0 ? `让出 ${Math.abs(d).toFixed(2)}s 给语音` : `多垫 ${d.toFixed(2)}s`
+  }
+  const speechNote = plan.speech.delta > 0.005
+    ? `超出 ${plan.speech.delta.toFixed(2)}s`
+    : plan.speech.delta < -0.005
+      ? `不足 ${Math.abs(plan.speech.delta).toFixed(2)}s`
+      : '正好匹配'
+  const speedNote = sp.source === 'user'
+    ? '你手动指定'
+    : sp.applied > 1.001
+      ? `加快 ${Math.round((sp.applied - 1) * 100)}%`
+      : sp.applied < 0.999
+        ? `放慢 ${Math.round((1 - sp.applied) * 100)}%`
+        : '保持原速'
+  const speedSrc = sp.source === 'user' ? '你的设置' : sp.source === 'llm' ? 'AI 建议' : '规则计算'
+  const padSrc = plan.pad_side.source === 'llm'
+    ? `AI 优先${SIDE_NAME[plan.pad_side.applied] ?? plan.pad_side.applied}`
+    : `优先${SIDE_NAME[plan.pad_side.applied] ?? plan.pad_side.applied}`
+
+  return (
+    <div className="plan">
+      <div className="plan-head">
+        <b>编排账本</b>
+        <span className={`tag ${plan.source}`}>
+          {plan.source === 'llm' ? 'AI 已参与' : '全部由规则计算'}
+        </span>
+        {plan.reason && <span className="plan-reason">{plan.reason}</span>}
+      </div>
+      <div className="plan-rows">
+        <div className="plan-row">
+          <span className="pk">语速</span>
+          <span className="pv">1.00 → {sp.applied.toFixed(2)}×（{speedNote}）</span>
+          <span className="ps">{speedSrc}</span>
+        </div>
+        {sp.clamped && sp.llm_raw !== null && (
+          <div className="plan-row note">
+            <span className="pk">约束</span>
+            <span className="pv">AI 建议 {sp.llm_raw.toFixed(2)}×，已收敛到硬边界 {sp.applied.toFixed(2)}×</span>
+            <span className="ps">边界生效</span>
+          </div>
+        )}
+        <div className="plan-row">
+          <span className="pk">语音</span>
+          <span className="pv">
+            实际 {plan.speech.body.toFixed(2)}s / 目标 {plan.speech.target.toFixed(2)}s（{speechNote}）
+          </span>
+          <span className="ps">实测</span>
+        </div>
+        <div className="plan-row">
+          <span className="pk">头部静音</span>
+          <span className="pv">
+            {sil.head_before.toFixed(2)}s → {sil.head_after.toFixed(2)}s（{shift(sil.head_before, sil.head_after)}）
+          </span>
+          <span className="ps">{padSrc}</span>
+        </div>
+        <div className="plan-row">
+          <span className="pk">尾部静音</span>
+          <span className="pv">
+            {sil.tail_before.toFixed(2)}s → {sil.tail_after.toFixed(2)}s（{shift(sil.tail_before, sil.tail_after)}）
+          </span>
+          <span className="ps">{padSrc}</span>
+        </div>
+      </div>
+      {plan.text_simplified && (
+        <div className="plan-suggest">
+          <span>AI 建议精简为：<b>{plan.text_simplified}</b></span>
+          <button className="btn mini" onClick={() => onApply(plan.text_simplified!)}>采用</button>
+        </div>
+      )}
     </div>
   )
 }

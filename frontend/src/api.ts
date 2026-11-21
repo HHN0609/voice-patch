@@ -40,6 +40,33 @@ export interface Take {
   wav: string
 }
 
+/** 编排账本：本次合成做的全部取舍，逐项标注来源，便于用户追溯 */
+export interface DecisionPlan {
+  source: 'llm' | 'rules'
+  reason: string
+  text_simplified: string | null
+  speed: {
+    rules: number
+    llm_raw: number | null
+    applied: number
+    clamped: boolean
+    source: 'user' | 'llm' | 'rules'
+  }
+  pad_side: {
+    rules: string
+    llm_raw: string | null
+    applied: string
+    source: 'llm' | 'rules'
+  }
+  speech: { target: number; body: number; delta: number }
+  silence: {
+    head_before: number
+    head_after: number
+    tail_before: number
+    tail_after: number
+  }
+}
+
 export interface SynthResp {
   segment_id: string
   text_norm: string
@@ -51,12 +78,7 @@ export interface SynthResp {
   overflow: boolean
   delta: number
   d_class: boolean
-  /** 编排决策来源：llm = AI 建议，rules = 内置规则（AI 不可用时自动回退） */
-  decision: {
-    source: 'llm' | 'rules'
-    reason: string
-    text_simplified: string | null
-  }
+  plan: DecisionPlan
 }
 
 export interface RenderResp {

@@ -147,13 +147,20 @@ def synthesize_segment(sid: str, text: str, speed: float | None = None,
     probe_trim = str(Path(proj["audio_path"]).parent / f"seg_{sid}_probe.wav")
     ff.trim_edge_silence(probe_res["wav_path"], probe_trim)
     raw_speech = ff.duration(probe_trim)
-    speed_use = speed if speed is not None else fitting.choose_speed(raw_speech, speech_target, lo, hi)
-    speed_use = round(min(max(speed_use, lo), hi), 4)
+    speed_by_rules = speed if speed is not None else fitting.choose_speed(raw_speech, speech_target, lo, hi)
+    speed_by_rules = round(min(max(speed_by_rules, lo), hi), 4)
+    speed_use = speed_by_rules
+    speed_src = "user" if speed is not None else "rules"
 
     # 可选：交给大模型微调语速 / 决定优先占用哪侧静音 / 给出精简建议。
-    # 失败一律回退规则策略，绝不阻断合成。
+    # 失败一律回退规则策略，绝不阻断合成。所有取舍都记进编排账本供前端展示。
     pad_side = "tail"
-    decision = {"source": "rules", "reason": "", "text_simplified": None}
+    plan_source = "rules"
+    reason = ""
+    text_simplified = None
+    llm_speed_raw: float | None = None
+    llm_speed_clamped = False
+    llm_pad_side: str | None = None
     if llm_decider.enabled(use_llm):
         advice = llm_decider.decide(
             text=text_norm, window=window, speech_target=speech_target,
@@ -162,16 +169,22 @@ def synthesize_segment(sid: str, text: str, speed: float | None = None,
             rule_speed=speed_use, video_duration=proj["duration"],
         )
         if advice is not None:
+            plan_source = "llm"
+            reason = advice.reason
+            text_simplified = advice.text_simplified
+            llm_pad_side = advice.pad_side
+            pad_side = advice.pad_side
+            llm_speed_raw = advice.speed_raw
+            llm_speed_clamped = advice.speed_clamped
             if speed is None and advice.speed is not None:
                 speed_use = advice.speed  # 已由 decider clamp 在硬边界内
-            pad_side = advice.pad_side
-            decision = {"source": "llm", "reason": advice.reason,
-                        "text_simplified": advice.text_simplified}
+                speed_src = "llm"
         else:
-            decision["reason"] = "AI 决策不可用，已回退规则策略"
+            reason = "AI 决策不可用，已回退规则策略"
 
     fit_list: list[fitting.TakeFit] = []
     out: list[dict] = []
+    plan_sample: dict | None = None
     seg_dir = Path(proj["audio_path"]).parent
     for i in range(takes):
         if i == 0:
@@ -192,6 +205,12 @@ def synthesize_segment(sid: str, text: str, speed: float | None = None,
         else:
             shutil.copy(raw_path, voiced)
         pad = fitting.plan_pads(speech_len, speech_target, head_pad, tail_pad, side=pad_side)
+        if plan_sample is None:  # 账本取第一个 take 的实测值
+            plan_sample = {
+                "speech_body": round(speech_len, 4),
+                "head_before": round(head_pad, 4), "head_after": round(pad.head_pad, 4),
+                "tail_before": round(tail_pad, 4), "tail_after": round(pad.tail_pad, 4),
+            }
 
         # 总长恒定对齐 window：头 (head_pad+fade) + 语音 + 尾 (tail_pad+fade)
         final = seg_dir / f"seg_{sid}_take{i + 1}.wav"
@@ -216,9 +235,25 @@ def synthesize_segment(sid: str, text: str, speed: float | None = None,
     overflow = best.status != "ok"
     execute("UPDATE segments SET text_norm=?, status=? WHERE id=?",
             (text_norm, "synthesized", sid))
+    sample = plan_sample or {"speech_body": 0.0, "head_before": 0.0, "head_after": 0.0,
+                             "tail_before": 0.0, "tail_after": 0.0}
+    plan = {
+        "source": plan_source,
+        "reason": reason,
+        "text_simplified": text_simplified,
+        "speed": {"rules": speed_by_rules, "llm_raw": llm_speed_raw,
+                  "applied": speed_use, "clamped": llm_speed_clamped, "source": speed_src},
+        "pad_side": {"rules": "tail", "llm_raw": llm_pad_side, "applied": pad_side,
+                     "source": "llm" if llm_pad_side else "rules"},
+        "speech": {"target": round(speech_target, 4), "body": sample["speech_body"],
+                   "delta": round(sample["speech_body"] - speech_target, 4)},
+        "silence": {"head_before": sample["head_before"], "head_after": sample["head_after"],
+                    "tail_before": sample["tail_before"], "tail_after": sample["tail_after"]},
+    }
+
     return {"segment_id": sid, "text_norm": text_norm, "speed": speed_use,
             "window": round(window, 4), "speech": round(speech_target, 4), "takes": out,
-            "voice_source": voice_source, "decision": decision,
+            "voice_source": voice_source, "plan": plan,
             "overflow": overflow,
             "delta": best.delta,
             "d_class": bool(raw_speech > speech_target * 1.5)}  # 语音远超目标，按 D 类提示五选一路由

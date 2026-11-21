@@ -26,7 +26,9 @@ _LOCK = threading.Lock()
 
 @dataclass
 class Advice:
-    speed: float | None = None        # None = 不覆盖规则层算出的语速
+    speed: float | None = None        # 已夹紧到硬边界的最终建议；None = 不覆盖规则语速
+    speed_raw: float | None = None    # AI 的原始建议（夹紧前），用于向用户明示是否被收敛
+    speed_clamped: bool = False
     pad_side: str = "tail"
     text_simplified: str | None = None
     reason: str = ""
@@ -162,6 +164,9 @@ def _parse(resp: httpx.Response, source_text: str, lo: float, hi: float) -> Advi
 
     advice = Advice(source="llm")
     advice.speed = _num(obj.get("speed"), lo, hi)
+    if advice.speed is not None:
+        advice.speed_raw = float(obj["speed"])
+        advice.speed_clamped = abs(advice.speed_raw - advice.speed) > 1e-6
 
     side = obj.get("pad_side")
     if isinstance(side, str) and side.strip().lower() in PAD_SIDES:
