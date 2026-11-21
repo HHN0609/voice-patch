@@ -43,12 +43,32 @@ def get_project(pid: str) -> dict:
 # ------------------------------------------------------- [2][3] 选区扩展 + 裁切
 def expand_region(t0: float, t1: float, silences: list[tuple[float, float]],
                   audio_dur: float, max_expand: float) -> tuple[float, float]:
-    """把 [t0,t1] 扩到最近的静音边界（文档 §3 [3]），扩展量受限。"""
-    before = [e for s, e in silences if e <= t0 + 1e-6]
-    after = [s for s, _ in silences if s >= t1 - 1e-6]
-    T0 = min(max(t0 - max_expand, max(before) if before else t0 - 0.25), t0)
-    T1 = max(min(t1 + max_expand, min(after) if after else t1 + 0.25), t1)
+    """把 [t0,t1] 之外补上静音余量，供拼接淡化使用——但只在静音段内部扩。
+
+    端点落在静音段里：扩到该静音段的边界（受 max_expand 限制）；
+    端点本身就在语音中：不扩。否则会把邻字语音吃进窗口——
+    既让 ASR 多识别出字，又让替换窗口无端变长（曾出现选区 2.08s 窗口 3.08s）。
+    """
+    T0, T1 = t0, t1
+    for s, e in silences:
+        if s <= t0 <= e:
+            T0 = max(s, t0 - max_expand)
+            break
+    for s, e in silences:
+        if s <= t1 <= e:
+            T1 = min(e, t1 + max_expand)
+            break
     return round(max(T0, 0.0), 4), round(min(T1, audio_dur), 4)
+
+
+def trim_words(words: list[dict], rel_t1: float, eps: float = 0.02) -> list[dict]:
+    """舍弃静音扩展从选区后方带进来的下一句起头。
+
+    ASR 窗口是扩展后的 [T0,T1]，但文本只应包含用户框选的红区。
+    词的中点落在红区终点（裁切音频内的相对位置 rel_t1）之后即舍；
+    deepseek 无真实字级时间戳时 start/end 为均分估算，midpoint 判定同样近似适用。
+    """
+    return [w for w in words if (w["start"] + w["end"]) / 2.0 <= rel_t1 + eps]
 
 
 def transcribe_segment(pid: str, t0: float, t1: float) -> dict:
@@ -61,15 +81,18 @@ def transcribe_segment(pid: str, t0: float, t1: float) -> dict:
     ff.cut(audio, T0, T1, seg_wav)
 
     asr = registry.get_asr()
-    words = asr.transcribe(seg_wav)
+    words = trim_words(asr.transcribe(seg_wav), t1 - T0)
     text_raw = "".join(w["text"] for w in words)
     text_norm = normalize_text(text_raw)
 
     sid = new_id()
     execute("INSERT INTO segments VALUES(?,?,?,?,?,?,?,?,?,?)",
             (sid, pid, t0, t1, T0, T1, text_raw, text_norm, "transcribed", now()))
+    s0, s1 = ff.speech_span(audio, T0, T1)
     return {"segment_id": sid, "t0": t0, "t1": t1, "T0": T0, "T1": T1,
-            "window": round(T1 - T0, 4), "words": words,
+            "window": round(T1 - T0, 4),
+            "speech": round(s1 - s0, 4),
+            "words": words,
             "text_raw": text_raw, "text_norm": text_norm,
             "asr_hint": getattr(asr, "hint", None)}
 
@@ -104,7 +127,15 @@ def synthesize_segment(sid: str, text: str, speed: float | None = None,
     proj = get_project(seg["project_id"])
 
     text_norm = normalize_text(text)
-    window = seg["T1"] - seg["T0"] + 2 * RENDER["crossfade_ms"] / 1000.0  # 预留拼接淡化量
+    fade = RENDER["crossfade_ms"] / 1000.0
+    window = seg["T1"] - seg["T0"] + 2 * fade  # 预留拼接淡化量
+
+    # 适配目标 = 窗口内的实际语音跨度（ADR 对白替换做法）：
+    # 静音扩展出来的留白垫不该由语音去填，否则语音被拉长、take 前后出现多余留白。
+    s0, s1 = ff.speech_span(proj["audio_path"], seg["T0"], seg["T1"])
+    head_pad = max(s0 - seg["T0"], 0.0)
+    tail_pad = max(seg["T1"] - s1, 0.0)
+    speech_target = max(s1 - s0, 0.2)
 
     tts = registry.get_tts()
     # 参考音：优先用户框选的“同说话人”区间（多人视频必需）；
@@ -126,9 +157,12 @@ def synthesize_segment(sid: str, text: str, speed: float | None = None,
     execute("UPDATE projects SET voice_id=? WHERE id=?", (voice_id, proj["id"]))
 
     takes = takes or CFG["tts"].get("takes", 3)
-    # 第一遍用 1.0 探时长 → 自动求速；后续 take 都按该速度生成
+    # 第一遍用 1.0 探时长（掐掉 TTS 自带头尾静音）→ 按语音跨度自动求速
     probe_res = tts.synthesize(text_norm, voice_id, speed=1.0, seed=0)
-    auto_sp = speed if speed else fitting.auto_speed(probe_res["duration"], window,
+    probe_trim = str(Path(proj["audio_path"]).parent / f"seg_{sid}_probe.wav")
+    ff.trim_edge_silence(probe_res["wav_path"], probe_trim)
+    raw_speech = ff.duration(probe_trim)
+    auto_sp = speed if speed else fitting.auto_speed(raw_speech, speech_target,
                                                      *RENDER["speed_range"])
 
     lo, hi = RENDER["stretch_range"]
@@ -138,23 +172,30 @@ def synthesize_segment(sid: str, text: str, speed: float | None = None,
     seg_dir = Path(proj["audio_path"]).parent
     for i in range(takes):
         if i == 0:
-            raw_path, raw_dur, seed = probe_res["wav_path"], probe_res["duration"], 0
+            raw_path, raw_dur, seed = probe_trim, raw_speech, 0
         else:
             seed = 1000 + i
             res = tts.synthesize(text_norm, voice_id, speed=auto_sp, seed=seed)
-            raw_path, raw_dur = res["wav_path"], res["duration"]
-        f = fitting.fit_take(raw_dur, window, auto_sp, allow_stretch, (lo, hi), tol_abs, tol_rel)
+            raw_path = str(seg_dir / f"seg_{sid}_raw{i + 1}.wav")
+            ff.trim_edge_silence(res["wav_path"], raw_path)
+            raw_dur = ff.duration(raw_path)
+        # 语音本体按语音跨度适配（窗口里的静音垫不由语音去填）
+        f = fitting.fit_take(raw_dur, speech_target, auto_sp, allow_stretch,
+                             (lo, hi), tol_abs, tol_rel)
         f.take_no = i + 1
-        final = seg_dir / f"seg_{sid}_take{i + 1}.wav"
         # 精确等长：tempo = 原始时长 / 目标时长（覆盖语速应用与局部拉伸两种情况）
         tempo = raw_dur / f.final_dur if f.final_dur > 0 else 1.0
+        voiced = str(seg_dir / f"seg_{sid}_voiced{i + 1}.wav")
         if abs(tempo - 1.0) > 0.001:
-            ff.atempo(raw_path, tempo, str(final))
+            ff.atempo(raw_path, tempo, voiced)
         else:
-            shutil.copy(raw_path, final)
+            shutil.copy(raw_path, voiced)
+        # 摆回原语音位置：头 (head_pad+fade) + 语音 + (tail_pad+fade) → 总长 ≈ 窗口
+        final = seg_dir / f"seg_{sid}_take{i + 1}.wav"
+        ff.pad_silence(voiced, head_pad + fade, tail_pad + fade, str(final))
         f.final_dur = ff.duration(str(final))  # 以实际输出为准
         f.delta = round(f.final_dur - window, 4)
-        f.status = "ok" if abs(f.delta) <= max(tol_abs, window * tol_rel) else f.status
+        f.status = "ok" if abs(f.delta) <= max(tol_abs, speech_target * tol_rel) else f.status
         take_id = new_id()
         execute("INSERT INTO takes VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (take_id, sid, i + 1, text_norm, tts.name, voice_id, round(auto_sp, 4),
@@ -169,11 +210,11 @@ def synthesize_segment(sid: str, text: str, speed: float | None = None,
     execute("UPDATE segments SET text_norm=?, status=? WHERE id=?",
             (text_norm, "synthesized", sid))
     return {"segment_id": sid, "text_norm": text_norm, "speed": round(auto_sp, 4),
-            "window": round(window, 4), "takes": out,
+            "window": round(window, 4), "speech": round(speech_target, 4), "takes": out,
             "voice_source": voice_source,
             "overflow": overflow,
             "delta": best.delta,
-            "d_class": bool(best.delta > window * 0.5)}  # Δ 超过窗口一半，按 D 类提示五选一路由
+            "d_class": bool(raw_speech > speech_target * 1.5)}  # 语音远超目标，按 D 类提示五选一路由
 
 
 # --------------------------------------------- [9][10] 拼接/底噪/响度/导出

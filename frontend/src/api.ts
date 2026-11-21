@@ -21,6 +21,8 @@ export interface TranscribeResp {
   T0: number
   T1: number
   window: number
+  /** 窗口内实际语音跨度（静音垫除外），时长适配的目标 */
+  speech: number
   words: Word[]
   text_raw: string
   text_norm: string

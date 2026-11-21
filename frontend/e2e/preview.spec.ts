@@ -61,7 +61,7 @@ test('试听播完自动停，重点试听从 t0 完整播到 t1（bug1/bug2）'
   const stopAt = parse(await timeText(page))
   expect(Math.abs(stopAt - t1)).toBeLessThan(0.5) // 停在选区终点附近
 
-  // 重点试听：必须立即从 t0 起播，且后续 1.5s 内持续播放不误停
+  // 重点试听：必须立即从 t0 起播，且后续 1.5s 内持续播放不误停；视频画面同步跟随
   await previewBtn(page).click()
   await expect(previewBtn(page)).toContainText('■ 停止')
   const startAt = parse(await timeText(page))
@@ -73,11 +73,19 @@ test('试听播完自动停，重点试听从 t0 完整播到 t1（bug1/bug2）'
     const now = parse(await timeText(page))
     expect(now).toBeGreaterThan(last - 0.001) // 持续前进
     last = now
+    const vt = await page.evaluate(() => (document.querySelector('video') as HTMLVideoElement).currentTime)
+    expect(vt).toBeGreaterThan(t0) // 视频画面跟随试听前进
   }
-  // 播到选区终点才自动停（bug2: 没播完就停）
+  // 播到选区终点才自动停（bug2: 没播完就停）；停止后视频一并暂停且不超前（光标不越界）
   await waitAutoStop(page, t1 - t0)
   const finalAt = parse(await timeText(page))
-  expect(Math.abs(finalAt - t1)).toBeLessThan(0.5)
+  expect(Math.abs(finalAt - t1)).toBeLessThan(0.3)
+  const v = await page.evaluate(() => {
+    const el = document.querySelector('video') as HTMLVideoElement
+    return { t: el.currentTime, paused: el.paused }
+  })
+  expect(v.paused).toBe(true)
+  expect(Math.abs(v.t - finalAt)).toBeLessThan(0.15) // 视频与试听音频相位同步
 })
 
 test('试听中途停止，再点试听从暂停位置续播', async ({ page }) => {

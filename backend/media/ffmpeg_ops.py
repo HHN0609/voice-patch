@@ -101,6 +101,45 @@ def detect_silences(wav: str, noise_db: int = -35, min_d: float = 0.15) -> list[
     return list(zip(starts, ends[: len(starts)]))
 
 
+def speech_span(wav: str, t0: float, t1: float, noise_db: int = -35, min_d: float = 0.15,
+                min_speech: float = 0.08) -> tuple[float, float]:
+    """[t0, t1] 内实际语音的绝对起止（把窗口与静音段求补集）。
+
+    长度 < min_speech 的"语音段"视为检测噪声（静音边界抖动会产生几毫秒伪段），
+    否则会把紧跟其后的长静音误算进语音跨度，合成时 TTS 提前开口。
+    无有效语音时返回 (t0, t1)。
+    """
+    spans: list[tuple[float, float]] = []
+    cur = t0
+    for s, e in detect_silences(wav, noise_db, min_d):
+        s2, e2 = max(s, t0), min(e, t1)
+        if e2 <= s2:
+            continue  # 与窗口不相交
+        if s2 > cur:
+            spans.append((cur, s2))
+        cur = max(cur, e2)
+    if cur < t1:
+        spans.append((cur, t1))
+    spans = [(s, e) for s, e in spans if e - s >= min_speech]
+    if not spans:
+        return t0, t1
+    return spans[0][0], spans[-1][1]
+
+
+def trim_edge_silence(src: str, dst: str, noise_db: int = -35, keep: float = 0.05) -> None:
+    """掐头去尾静音（两端各保留 keep 秒过渡），输出语音本体。"""
+    sil = f"silenceremove=start_periods=1:start_threshold={noise_db}dB:start_silence={keep}"
+    _run(["-y", "-i", src, "-af", f"{sil},areverse,{sil},areverse", "-c:a", "pcm_s16le", dst])
+
+
+def pad_silence(src: str, head: float, tail: float, dst: str) -> None:
+    """头尾补静音使总长精确为 duration(src)+head+tail。"""
+    total = duration(src) + head + tail
+    h_ms = max(0, round(head * 1000))
+    _run(["-y", "-i", src, "-af", f"adelay=delays={h_ms}ms:all=1,apad",
+          "-t", f"{total:.4f}", "-c:a", "pcm_s16le", dst])
+
+
 def atempo(src: str, tempo: float, dst: str) -> None:
     """变速（不保音高）。tempo>1 加速变短。范围 0.5~2.0。"""
     tempo = min(max(tempo, 0.5), 2.0)

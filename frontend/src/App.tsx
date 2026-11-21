@@ -70,9 +70,10 @@ export default function App() {
     wsRef.current = ws
   }, [])
 
-  // 试听时停止跟随：暂停播放、取消进度跟随、复位按钮
+  // 试听时停止跟随：暂停试听音频与视频、取消进度跟随、复位按钮
   const stopPreview = useCallback(() => {
     previewRef.current?.pause()
+    videoRef.current?.pause()
     previewingRef.current = false
     cancelAnimationFrame(previewRafRef.current)
     previewRafRef.current = 0
@@ -150,12 +151,29 @@ export default function App() {
         stopPreview()
         return
       }
+      // 持续纠正视频相位差，保证口型与试听声音同步
+      const v = videoRef.current
+      if (v && !v.paused && Math.abs(v.currentTime - el.currentTime) > 0.15) {
+        v.currentTime = el.currentTime
+      }
       setCursor(el.currentTime)
       cursorRef.current = el.currentTime
       wsRef.current?.setTime(el.currentTime)
       previewRafRef.current = requestAnimationFrame(tick)
     }
     const doPlay = () => {
+      // 视频画面与试听音频同步真实播放（视频静音，声音来自试听 Audio）。
+      // 二者 seek 延迟不同（实测音频可慢 200ms+），若同时 play() 视频会先跑、
+      // 停止时光标被超前的视频位置拽过选区末尾——所以等音频真正出声
+      // （playing 事件）后再对齐音频当前位置起播视频。
+      const v = videoRef.current
+      if (v) {
+        a!.addEventListener('playing', () => {
+          if (!previewingRef.current) return
+          v.currentTime = a!.currentTime
+          v.play().catch(() => { /* 视频起播失败不影响音频试听 */ })
+        }, { once: true })
+      }
       a!.play().catch(() => stopPreview())
       cancelAnimationFrame(previewRafRef.current)
       previewRafRef.current = requestAnimationFrame(tick)
@@ -314,7 +332,8 @@ export default function App() {
             muted // 声音统一由波形播放器出，视频轨静音避免双声
             onLoadedMetadata={(e) => { e.currentTarget.muted = true }}
             onTimeUpdate={(e) => {
-              // 视频暂停拖动时反向同步光标（拖进度条场景）
+              // 视频暂停拖动时反向同步光标（拖进度条场景）；试听期间由试听 tick 主导，不反向同步
+              if (previewingRef.current) return
               const v = e.currentTarget
               if (!wsRef.current?.isPlaying()) wsRef.current?.setTime(v.currentTime)
             }}
@@ -376,7 +395,9 @@ export default function App() {
         </div>
         <div className="sel-info">
           <span>
-            口误区间：{mispeak ? `${fmt(mispeak.t0)} → ${fmt(mispeak.t1)}` : '未选'}
+            口误区间：{mispeak
+              ? `${fmt(mispeak.t0)} → ${fmt(mispeak.t1)}（时长 ${(mispeak.t1 - mispeak.t0).toFixed(2)}s）`
+              : '未选'}
             {mispeak && (
               <button className="btn mini" onClick={() => previewRange('mispeak', mispeak)}>
                 {previewing === 'mispeak' ? '■ 停止' : '▶ 试听'}
@@ -384,7 +405,9 @@ export default function App() {
             )}
           </span>
           <span>
-            参考音色：{voice ? `${fmt(voice.t0)} → ${fmt(voice.t1)}` : '未选（默认用口误区间）'}
+            参考音色：{voice
+              ? `${fmt(voice.t0)} → ${fmt(voice.t1)}（时长 ${(voice.t1 - voice.t0).toFixed(2)}s）`
+              : '未选（默认用口误区间）'}
             {voice && (
               <button className="btn mini" onClick={() => previewRange('voice', voice)}>
                 {previewing === 'voice' ? '■ 停止' : '▶ 试听'}
@@ -403,8 +426,9 @@ export default function App() {
         <section className="card">
           <h2>② 修改文本</h2>
           <div className="words">
+            {/* 词时间是 ASR 裁切片段内的相对时间，跳转要加上窗口起点 T0 */}
             {seg.words.map((w, i) => (
-              <span key={i} className="word" onClick={() => wsRef.current?.setTime(w.start)}>
+              <span key={i} className="word" onClick={() => wsRef.current?.setTime(seg.T0 + w.start)}>
                 {w.text}
               </span>
             ))}
@@ -431,7 +455,7 @@ export default function App() {
               onChange={(e) => setSpeed(Number(e.target.value))}
             />
             <span className="mono">{speed.toFixed(2)}×</span>
-            <span className="hint">窗口 {seg.window.toFixed(2)}s</span>
+            <span className="hint">语音 {seg.speech.toFixed(2)}s · 窗口 {seg.window.toFixed(2)}s</span>
             <button className="btn primary" disabled={!!busy} onClick={doSynthesize}>
               生成候选音频
             </button>
